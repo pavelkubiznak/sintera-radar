@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "jobs-scraper-gui",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["app.py"],
+      "port": 5001
+    },
+    {
+      "name": "jobs-scheduler",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["scheduler.py"],
+      "port": 0
+    }
+  ]
+}

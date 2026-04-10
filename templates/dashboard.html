@@ -1,0 +1,171 @@
+{% extends "_layout.html" %}
+{% set active_page = 'dashboard' %}
+{% block title %}Dashboard — Sintera Radar{% endblock %}
+
+{% block content %}
+<div class="main-header">
+    <h1>Dashboard</h1>
+    <div class="subtitle">Posledni scan: {{ d_stats.posledni_scan[:16] if d_stats.posledni_scan != '—' else '—' }}</div>
+</div>
+
+<!-- Key metrics -->
+<div class="stats-row">
+    <div class="stat-card purple">
+        <div class="number">{{ d_stats.aktivni_pozice }}</div>
+        <div class="label">Aktivnich pozic</div>
+    </div>
+    <div class="stat-card green">
+        <div class="number">{{ d_stats.nove_tyden }}</div>
+        <div class="label">Novych tento tyden</div>
+    </div>
+    <div class="stat-card blue">
+        <div class="number">{{ d_stats.dm_total }}</div>
+        <div class="label">Decision makers</div>
+    </div>
+    <div class="stat-card orange">
+        <div class="number">{{ d_stats.outreach_total }}</div>
+        <div class="label">Osloveno celkem</div>
+    </div>
+    <div class="stat-card">
+        <div class="number">{{ d_stats.outreach_ceka }}</div>
+        <div class="label">Ceka na odpoved</div>
+    </div>
+    <div class="stat-card green">
+        <div class="number">{{ d_stats.outreach_odpoved }}</div>
+        <div class="label">Pozitivni odpovedi</div>
+    </div>
+</div>
+
+<!-- Surge alerts -->
+{% if surges %}
+<div class="alert-box surge">
+    <h3 style="color:#ea580c;">Nahly narust pozic tento tyden</h3>
+    {% for s in surges %}
+    <div style="margin-bottom:8px;">
+        <a class="firma-link" href="/firma/{{ s.firma_norm|default(s.firma|lower) }}">{{ s.firma }}</a>
+        ({{ s.kraj }})
+        — <span style="color:#ea580c; font-weight:700;">+{{ s.nove_pozice }} novych pozic</span>
+        <br><span class="text-muted">
+            {{ s.pozice_list[:3]|join(', ') }}{% if s.pozice_list|length > 3 %} +dalsi{% endif %}
+        </span>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Weekly recommendations — top 5 per region -->
+{% if recommendations %}
+<div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <h2 style="margin:0;">Doporuceni na tento tyden</h2>
+        <a href="/batch" class="btn btn-primary btn-sm">Otevrit Batch zpravy</a>
+    </div>
+    <p class="text-muted" style="margin-bottom:16px;">
+        Top 5 firem za kazdy region, bez jiz oslovenych. Klikni na firmu pro kompletni prehled.
+    </p>
+
+    {% set current_kraj = namespace(val='') %}
+    {% for r in recommendations %}
+        {% if r.doporuceny_kraj != current_kraj.val %}
+            {% if not loop.first %}</tbody></table></div>{% endif %}
+            <div class="section-label">{{ r.doporuceny_kraj }}</div>
+            <div style="overflow-x:auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Firma</th>
+                        <th>Pozic</th>
+                        <th>Signal</th>
+                        <th>Kontakt</th>
+                        <th>Akce</th>
+                    </tr>
+                </thead>
+                <tbody>
+            {% set current_kraj.val = r.doporuceny_kraj %}
+        {% endif %}
+        <tr>
+            <td>
+                <a class="firma-link" href="/firma/{{ r.firma_norm }}">{{ r.firma }}</a>
+            </td>
+            <td><strong>{{ r.pocet_pozic }}</strong></td>
+            <td>
+                {% if r.signal == 'Opakovaně neobsazují' %}
+                <span class="signal signal-red">{{ r.signal }}</span>
+                {% elif r.signal == 'Dlouhodobě hledají' %}
+                <span class="signal signal-orange">{{ r.signal }}</span>
+                {% elif r.signal == 'Rozšiřují tým' %}
+                <span class="signal signal-blue">{{ r.signal }}</span>
+                {% else %}
+                <span class="signal signal-green">{{ r.signal }}</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if r.decision_makers %}
+                    <a href="{{ r.decision_makers[0].profile_url }}" target="_blank"
+                       style="color:#6366f1; text-decoration:none;">
+                        {{ r.decision_makers[0].full_name }}
+                    </a>
+                    <span class="text-muted">{{ r.decision_makers[0].current_title }}</span>
+                {% else %}
+                    <span class="text-muted">—</span>
+                {% endif %}
+            </td>
+            <td>
+                <a href="/firma/{{ r.firma_norm }}" class="btn btn-outline btn-sm">Detail</a>
+            </td>
+        </tr>
+    {% endfor %}
+    {% if recommendations %}</tbody></table></div>{% endif %}
+</div>
+{% endif %}
+
+<!-- Recent outreach -->
+{% if d_stats.recent_outreach %}
+<div class="card">
+    <h2>Posledni aktivita v outreachi</h2>
+    <table>
+        <thead>
+            <tr><th>Firma</th><th>Kontakt</th><th>Status</th><th>Datum</th></tr>
+        </thead>
+        <tbody>
+            {% for o in d_stats.recent_outreach %}
+            <tr>
+                <td><strong>{{ o.firma }}</strong></td>
+                <td>
+                    {% if o.kontakt_url %}
+                    <a href="{{ o.kontakt_url }}" target="_blank">{{ o.kontakt_jmeno }}</a>
+                    {% else %}
+                    {{ o.kontakt_jmeno }}
+                    {% endif %}
+                </td>
+                <td><span class="status-badge status-{{ o.status }}">{{ o.status }}</span></td>
+                <td class="text-muted">{{ o.datum_osloveni[:10] if o.datum_osloveni else '' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <div class="mt-1">
+        <a href="/outreach" class="btn btn-outline btn-sm">Zobrazit vse v CRM</a>
+    </div>
+</div>
+{% endif %}
+
+<!-- Quick links -->
+<div class="stats-row" style="margin-top:8px;">
+    <div class="card" style="text-align:center; flex:1;">
+        <h3 style="margin-bottom:8px;">Scraper</h3>
+        <p class="text-muted mb-0">Spustit novy scan pozic z jobs.cz</p>
+        <a href="/scraper" class="btn btn-primary btn-sm" style="margin-top:12px;">Otevrit</a>
+    </div>
+    <div class="card" style="text-align:center; flex:1;">
+        <h3 style="margin-bottom:8px;">Radar</h3>
+        <p class="text-muted mb-0">Vsechny firmy propojene s DM</p>
+        <a href="/radar" class="btn btn-primary btn-sm" style="margin-top:12px;">Otevrit</a>
+    </div>
+    <div class="card" style="text-align:center; flex:1;">
+        <h3 style="margin-bottom:8px;">Batch zpravy</h3>
+        <p class="text-muted mb-0">Hotove zpravy ke zkopirovani</p>
+        <a href="/batch" class="btn btn-primary btn-sm" style="margin-top:12px;">Otevrit</a>
+    </div>
+</div>
+{% endblock %}

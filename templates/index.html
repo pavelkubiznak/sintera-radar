@@ -1,0 +1,342 @@
+{% extends "_layout.html" %}
+{% set active_page = 'scraper' %}
+{% block title %}Scraper — Sintera Radar{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Filter grid */
+    .form-row { display: grid; grid-template-columns: 2fr 2fr 1fr; gap: 1rem; margin-bottom: 1rem; }
+    @media(max-width: 680px) { .form-row { grid-template-columns: 1fr; } }
+
+    label.field { display: block; font-size: 0.8rem; font-weight: 600; color: #555; margin-bottom: 0.3rem; }
+    select, input[type=text], input[type=number] {
+        width: 100%; padding: 0.5rem 0.7rem; border: 1.5px solid #d1d5db; border-radius: 8px;
+        font-size: 0.92rem; background: #fafafa; transition: border-color 0.15s; }
+    select:focus, input:focus { outline: none; border-color: #6366f1; background: #fff; }
+
+    /* Obory checkboxes */
+    .obory-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.35rem; }
+    .obory-grid label { display: flex; align-items: center; gap: 0.45rem; font-size: 0.83rem;
+                        cursor: pointer; padding: 0.25rem 0.4rem; border-radius: 6px; }
+    .obory-grid label:hover { background: #f0f4ff; }
+    .obory-grid input[type=checkbox] { accent-color: #6366f1; }
+
+    /* Mini checkbox row */
+    .check-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
+    .check-row label { display: flex; align-items: center; gap: 0.35rem; font-size: 0.83rem;
+                       cursor: pointer; }
+
+    /* Buttons */
+    .btn-row { display: flex; gap: 0.75rem; margin-top: 1.1rem; flex-wrap: wrap; }
+
+    /* Progress */
+    #progress-box { display: none; }
+    #progress-box.active { display: block; }
+    .progress-track { background: #e5e7eb; border-radius: 999px; height: 14px;
+                      overflow: hidden; margin: 0.75rem 0; }
+    .progress-fill { height: 100%; background: linear-gradient(90deg, #6366f1, #818cf8);
+                     border-radius: 999px; transition: width 0.4s ease; min-width: 8px; }
+    .progress-meta { display: flex; justify-content: space-between; font-size: 0.8rem; color: #666; }
+    .pulse { display: inline-block; width: 10px; height: 10px; background: #6366f1;
+             border-radius: 50%; animation: pulse 1.2s ease-in-out infinite;
+             margin-right: 0.5rem; vertical-align: middle; }
+    @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.7)} }
+
+    /* Results table */
+    .results-header { display: flex; align-items: center; justify-content: space-between;
+                      flex-wrap: wrap; gap: 0.75rem; margin-bottom: 0.75rem; }
+    .badge { background: #e0e7ff; color: #4338ca; font-size: 0.78rem; font-weight: 700;
+             padding: 0.2rem 0.6rem; border-radius: 999px; }
+    .badge-green { background: #d1fae5; color: #065f46; }
+    .table-wrap { overflow-x: auto; }
+    .job-link { color: #6366f1; text-decoration: none; font-weight: 600; }
+    .job-link:hover { text-decoration: underline; }
+    .salary { display: inline-block; background: #d1fae5; color: #065f46; font-size: 0.76rem;
+              font-weight: 600; padding: 0.18rem 0.5rem; border-radius: 6px; white-space: nowrap; }
+    .empty { text-align: center; padding: 2.5rem; color: #888; }
+    .db-notice { background: #d1fae5; color: #065f46; padding: 0.6rem 1rem;
+                 border-radius: 8px; font-size: 0.86rem; margin-top: 0.75rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Progress box (zobrazí se po spuštění hledání) -->
+<div id="progress-box" class="card {% if job_id %}active{% endif %}">
+    <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem">
+        <span class="pulse" id="pulse-dot"></span>
+        <strong id="progress-label">Pripravuji...</strong>
+    </div>
+    <div class="progress-track">
+        <div class="progress-fill" id="progress-fill" style="width:2%"></div>
+    </div>
+    <div class="progress-meta">
+        <span id="progress-zprava">—</span>
+        <span id="progress-celkem">0 nabidek</span>
+    </div>
+</div>
+
+<div class="main-header">
+    <h1>Scraper</h1>
+    <div class="subtitle">Hledani pozic na jobs.cz</div>
+</div>
+
+<!-- Stat boxes -->
+{% if stats %}
+<div class="stats-row">
+    <div class="stat-card purple">
+        <div class="number">{{ stats.aktivni }}</div>
+        <div class="label">Aktivnich inzeratu</div>
+    </div>
+    <div class="stat-card blue">
+        <div class="number">{{ stats.total }}</div>
+        <div class="label">Celkem v databazi</div>
+    </div>
+    <div class="stat-card green">
+        <div class="number">{{ stats.nove_dnes }}</div>
+        <div class="label">Novych dnes</div>
+    </div>
+    <div class="stat-card">
+        <div class="number" style="font-size:1em;">{{ stats.posledni_scan[:10] if stats.posledni_scan != '—' else '—' }}</div>
+        <div class="label">Posledni scan</div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Search form -->
+<div class="card">
+    <h2>Parametry hledani</h2>
+    <form method="POST" action="/hledat" id="searchForm">
+        <div class="form-row">
+            <div>
+                <label class="field">Kraj</label>
+                <select name="kraj">
+                    <option value="">— Cela CR —</option>
+                    <option value="vse" {% if kraj_kod == 'vse' %}selected{% endif %}>Vsechny kraje najednou</option>
+                    {% for kod, (nazev, slug) in kraje.items() %}
+                    <option value="{{ kod }}" {% if kod == kraj_kod %}selected{% endif %}>{{ nazev }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="field">Klicove slovo</label>
+                <input type="text" name="hledat" placeholder="pozice, firma..." value="{{ hledat or '' }}">
+            </div>
+            <div>
+                <label class="field">Max. stran</label>
+                <input type="number" name="stranky" min="1" max="999" value="{{ stranky or 999 }}">
+            </div>
+        </div>
+
+        <!-- Obory -->
+        <div style="display:flex;align-items:center;gap:1rem;margin-bottom:.5rem">
+            <label class="field" style="margin:0">Obory</label>
+            <button type="button" class="btn btn-outline btn-sm" onclick="toggleObory(true)">Vybrat vse</button>
+            <button type="button" class="btn btn-outline btn-sm" onclick="toggleObory(false)">Odznacit vse</button>
+        </div>
+        <div class="obory-grid">
+            {% set labels = {
+              'strojirenstvi':'Strojirenstvi','technika':'Technika a vyvoj',
+              'elektrotechnika':'Elektrotechnika','vyroba':'Vyroba a prumysl',
+              'veda':'Veda a vyzkum','chemie':'Chemicky prumysl',
+              'doprava':'Doprava a logistika','farmacie':'Farmacie',
+              'ekonomika':'Ekonomika a finance','kvalita':'Kvalita a jakost',
+              'remesla':'Remesla a manualni prace','nakup':'Nakup',
+              'hr':'Personalistika a HR','management':'Vrcholovy management',
+              'telekomunikace':'Telekomunikace','zakaznicky':'Zakaznicky servis',
+              'it_vyvoj':'IS/IT: Vyvoj aplikaci','it_sprava':'IS/IT: Sprava systemu',
+              'it_konzultace':'IS/IT: Konzultace a analyzy',
+              'finance':'Bankovnictvi a fin. sluzby',
+              'marketing':'Marketing','obchod':'Prodej a obchod',
+              'administrativa':'Administrativa','zdravotnictvi':'Zdravotnictvi',
+              'stavebnictvi':'Stavebnictvi'
+            } %}
+            {% for k, nazev in labels.items() %}
+            <label>
+                <input type="checkbox" name="obory" value="{{ k }}"
+                    {% if k in (obory_sel or []) %}checked{% endif %}>
+                {{ nazev }}
+            </label>
+            {% endfor %}
+        </div>
+
+        <!-- Dalsi filtry -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;margin-top:1rem">
+            <div>
+                <label class="field">Typ uvazku</label>
+                <div class="check-row">
+                    <label><input type="checkbox" name="uvazek" value="full" {% if uvazek_sel is not defined or 'full' in uvazek_sel %}checked{% endif %}> Plny uvazek</label>
+                    <label><input type="checkbox" name="uvazek" value="part" {% if uvazek_sel is defined and 'part' in uvazek_sel %}checked{% endif %}> Zkraceny uvazek</label>
+                </div>
+            </div>
+            <div>
+                <label class="field">Home office</label>
+                <div class="check-row">
+                    <label><input type="checkbox" name="home_office" value="moznost" {% if 'moznost' in (ho_sel or []) %}checked{% endif %}> Moznost</label>
+                    <label><input type="checkbox" name="home_office" value="prevazne" {% if 'prevazne' in (ho_sel or []) %}checked{% endif %}> Prevazne</label>
+                    <label><input type="checkbox" name="home_office" value="flexibilni" {% if 'flexibilni' in (ho_sel or []) %}checked{% endif %}> Flexibilni</label>
+                </div>
+            </div>
+            <div>
+                <label class="field">Zamestnavatel</label>
+                <div class="check-row">
+                    <label><input type="checkbox" name="prima" value="1" {% if prima is not defined or prima %}checked{% endif %}> Pouze primi (bez agentur)</label>
+                </div>
+            </div>
+            <div>
+                <label class="field">Po stazeni</label>
+                <div class="check-row">
+                    <label><input type="checkbox" name="do_db" value="1"> Ulozit do databaze</label>
+                </div>
+            </div>
+        </div>
+
+        <div class="btn-row">
+            <button type="submit" class="btn btn-primary">Hledat</button>
+            <button type="button" id="btn-csv" class="btn btn-outline" style="display:none"
+                    onclick="exportCsv()">Stahnout CSV</button>
+        </div>
+    </form>
+    <!-- hidden export form -->
+    <form method="POST" action="/export" id="exportForm" style="display:none">
+        <input type="hidden" name="job_id" id="export-job-id" value="">
+    </form>
+</div>
+
+<!-- Live vysledky -->
+<div id="results-container"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleObory(select) {
+    document.querySelectorAll('.obory-grid input[type=checkbox]')
+        .forEach(cb => cb.checked = select);
+}
+
+function exportCsv() {
+    document.getElementById('export-job-id').value = JOB_ID;
+    document.getElementById('exportForm').submit();
+}
+
+async function saveToDb() {
+    const btn = document.getElementById('btn-save-db');
+    if (!btn || !JOB_ID) return;
+    btn.disabled = true;
+    btn.textContent = 'Ukladam...';
+    try {
+        const r = await fetch(`/api/save/${JOB_ID}`, {method: 'POST'});
+        const d = await r.json();
+        if (d.db_stats) {
+            btn.remove();
+            const notice = document.getElementById('db-notice');
+            const html = `<div class="db-notice" id="db-notice">Ulozeno do databaze: <strong>${d.db_stats.nove}</strong> novych, <strong>${d.db_stats.aktualizovane}</strong> aktualizovanych.</div>`;
+            if (notice) {
+                notice.outerHTML = html;
+            } else {
+                document.getElementById('results-container').insertAdjacentHTML('afterbegin', html);
+            }
+        } else {
+            btn.textContent = d.error || 'Chyba';
+            btn.disabled = false;
+        }
+    } catch(e) {
+        btn.textContent = 'Chyba site';
+        btn.disabled = false;
+    }
+}
+
+// ── Live progress polling ──────────────────────────────────────
+const JOB_ID = "{{ job_id or '' }}";
+
+function pct(index, total) {
+    if (!total) return 5;
+    return Math.min(98, Math.round((index / total) * 100));
+}
+
+function renderResults(nabidky, dbStats) {
+    document.getElementById('progress-box').classList.remove('active');
+    document.getElementById('pulse-dot').style.display = 'none';
+
+    const container = document.getElementById('results-container');
+    if (!nabidky || nabidky.length === 0) {
+        container.innerHTML = '<div class="card"><div class="empty">Zadne nabidky nenalezeny.</div></div>';
+        return;
+    }
+
+    let dbNotice = '';
+    if (dbStats) {
+        dbNotice = `<div class="db-notice" id="db-notice">Ulozeno do databaze: <strong>${dbStats.nove}</strong> novych, <strong>${dbStats.aktualizovane}</strong> aktualizovanych.</div>`;
+    }
+
+    let rows = nabidky.map((n, i) => `
+        <tr>
+            <td style="color:#aaa;font-size:.78rem">${i+1}</td>
+            <td><a class="job-link" href="${n.url}" target="_blank">${n.pozice}</a></td>
+            <td>${n.firma}</td>
+            <td>${n.misto}</td>
+            <td style="font-size:.78rem">${n.kraj || ''}</td>
+            <td style="font-size:.78rem">${n.obor || ''}</td>
+            <td>${n.plat ? `<span class="salary">${n.plat}</span>` : ''}</td>
+            <td style="font-size:.78rem">${n.datum_vydani || ''}</td>
+            <td style="font-size:.78rem;color:#888">${n.datum_scrapovani || ''}</td>
+        </tr>`).join('');
+
+    container.innerHTML = `
+        ${dbNotice}
+        <div class="card">
+            <div class="results-header">
+                <h2>Vysledky</h2>
+                <span class="badge">${nabidky.length} nabidek</span>
+                ${!dbStats ? `<button class="btn btn-green" id="btn-save-db" onclick="saveToDb()">Ulozit do databaze</button>` : ''}
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>#</th><th>Pozice</th><th>Firma</th><th>Misto</th><th>Kraj</th><th>Obor</th><th>Plat</th><th>Vydano</th><th>Scrapovano</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+        </div>`;
+}
+
+if (JOB_ID) {
+    const box     = document.getElementById('progress-box');
+    const fill    = document.getElementById('progress-fill');
+    const label   = document.getElementById('progress-label');
+    const zprava  = document.getElementById('progress-zprava');
+    const celkem  = document.getElementById('progress-celkem');
+
+    box.classList.add('active');
+
+    const poll = setInterval(async () => {
+        try {
+            const r = await fetch(`/api/progress/${JOB_ID}`);
+            const d = await r.json();
+
+            zprava.textContent  = d.zprava || '—';
+            celkem.textContent  = `${d.celkem || 0} nabidek`;
+            label.textContent   = d.status === 'done' ? 'Hotovo' :
+                                  d.status === 'error' ? 'Chyba' : 'Scrapuji...';
+
+            const p = pct(d.kraj_index, d.kraj_total);
+            fill.style.width = (d.status === 'done' ? 100 : p) + '%';
+
+            if (d.status === 'done' || d.status === 'error') {
+                clearInterval(poll);
+                document.getElementById('pulse-dot').style.animation = 'none';
+                document.getElementById('pulse-dot').style.background =
+                    d.status === 'done' ? '#22c55e' : '#dc2626';
+
+                if (d.status === 'done') {
+                    const res = await fetch(`/api/results/${JOB_ID}`);
+                    const j   = await res.json();
+                    renderResults(j.nabidky, j.db_stats);
+                    document.getElementById('btn-csv').style.display = 'inline-block';
+                } else {
+                    document.getElementById('progress-zprava').textContent = d.chyba || 'Neznama chyba';
+                }
+            }
+        } catch(e) { /* sit docasne nedostupna */ }
+    }, 1500);
+}
+</script>
+{% endblock %}

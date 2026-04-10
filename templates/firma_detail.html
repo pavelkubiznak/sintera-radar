@@ -1,0 +1,266 @@
+{% extends "_layout.html" %}
+{% set active_page = 'radar' %}
+{% block title %}{{ detail.firma }} — Sintera Radar{% endblock %}
+
+{% block extra_css %}
+<style>
+    .firma-header { display: flex; justify-content: space-between; align-items: start;
+                    flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
+    .firma-header h1 { font-size: 1.6em; }
+    .firma-tags { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+    .tag { display: inline-block; padding: 3px 12px; border-radius: 12px;
+           font-size: 0.82em; font-weight: 600; }
+    .tag-region { background: #e0e7ff; color: #4338ca; }
+    .tag-days { background: #fef3c7; color: #92400e; }
+
+    .detail-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
+    @media (max-width: 900px) { .detail-grid { grid-template-columns: 1fr; } }
+
+    .pozice-table td { vertical-align: top; }
+    .pozice-inactive { opacity: 0.5; }
+    .scans-high { color: #dc2626; font-weight: 700; }
+    .scans-med  { color: #d97706; font-weight: 700; }
+    .scans-low  { color: #059669; }
+
+    .dm-card-detail { background: #f8f7ff; border-radius: 10px; padding: 14px 18px;
+                      margin-bottom: 10px; border: 1px solid #e8e5ff; }
+    .dm-card-detail .name { font-weight: 700; font-size: 1.05em; }
+    .dm-card-detail .title { color: #666; font-size: 0.9em; margin-top: 2px; }
+    .dm-card-detail .links { margin-top: 6px; font-size: 0.85em; }
+    .dm-card-detail .links a { color: #6366f1; text-decoration: none; }
+    .dm-card-detail .links a:hover { text-decoration: underline; }
+
+    .outreach-timeline { position: relative; padding-left: 20px; }
+    .outreach-timeline::before { content: ''; position: absolute; left: 6px; top: 4px;
+                                  bottom: 4px; width: 2px; background: #e2e2e2; }
+    .timeline-item { position: relative; margin-bottom: 16px; padding-left: 16px; }
+    .timeline-item::before { content: ''; position: absolute; left: -17px; top: 6px;
+                              width: 10px; height: 10px; border-radius: 50%;
+                              background: #6366f1; border: 2px solid #fff; }
+    .timeline-item .date { font-size: 0.8em; color: #888; }
+    .timeline-item .detail { font-size: 0.9em; margin-top: 2px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<div style="margin-bottom: 16px; font-size: 0.85em;">
+    <a href="/radar" style="color: #6366f1; text-decoration: none;">Radar</a>
+    <span style="color: #ccc; margin: 0 6px;">/</span>
+    <span style="color: #888;">{{ detail.firma }}</span>
+</div>
+
+<div class="firma-header">
+    <div>
+        <h1>{{ detail.firma }}</h1>
+        <div class="firma-tags">
+            {% for k in detail.kraje %}
+            <span class="tag tag-region">{{ k }}</span>
+            {% endfor %}
+            {% if detail.max_days > 0 %}
+            <span class="tag tag-days">Nejdelsi pozice: {{ detail.max_days }} dni</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="gap-sm">
+        <span class="stat-card purple" style="padding: 10px 16px;">
+            <span class="number" style="font-size: 1.3em;">{{ detail.pocet_aktivni }}</span>
+            <span class="label">Aktivnich</span>
+        </span>
+        <span class="stat-card" style="padding: 10px 16px;">
+            <span class="number" style="font-size: 1.3em; color: #888;">{{ detail.pocet_neaktivni }}</span>
+            <span class="label">Neaktivnich</span>
+        </span>
+    </div>
+</div>
+
+<div class="detail-grid">
+    <!-- LEFT: Positions -->
+    <div>
+        <!-- Active positions -->
+        {% if detail.pozice_aktivni %}
+        <div class="card">
+            <h2>Aktivni pozice ({{ detail.pozice_aktivni|length }})</h2>
+            <div style="overflow-x: auto;">
+            <table class="pozice-table">
+                <thead>
+                    <tr>
+                        <th>Pozice</th>
+                        <th>Kraj</th>
+                        <th>Plat</th>
+                        <th>Skenu</th>
+                        <th>Od</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in detail.pozice_aktivni %}
+                    <tr>
+                        <td>
+                            <a href="{{ p.url }}" target="_blank" style="color:#6366f1; text-decoration:none; font-weight:600;">
+                                {{ p.pozice }}
+                            </a>
+                            {% if p.predchozi_job_id %}
+                            <span class="signal signal-red" style="margin-left:4px;">OPAKOVANE</span>
+                            {% endif %}
+                            {% if p.obor %}<br><span class="text-muted">{{ p.obor }}</span>{% endif %}
+                        </td>
+                        <td>{{ p.kraj }}</td>
+                        <td>
+                            {% if p.plat_text %}
+                            <span style="background:#d1fae5; color:#065f46; font-size:0.78em; font-weight:600;
+                                         padding:2px 8px; border-radius:6px;">{{ p.plat_text }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="{% if p.pocet_scanu >= 8 %}scans-high{% elif p.pocet_scanu >= 5 %}scans-med{% else %}scans-low{% endif %}">
+                            {{ p.pocet_scanu }}x
+                        </td>
+                        <td class="text-muted" style="white-space:nowrap;">
+                            {{ p.datum_vydani if p.datum_vydani else p.datum_prvni_scan[:10] }}
+                            {% if p.predchozi_datum_prvni %}
+                            <br><span style="font-size:0.8em; color:#dc2626;">1. pokus: {{ p.predchozi_datum_prvni[:10] }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Inactive positions -->
+        {% if detail.pozice_neaktivni %}
+        <details class="card" style="cursor:pointer;">
+            <summary style="font-weight:600; font-size:1.05em;">
+                Neaktivni pozice ({{ detail.pozice_neaktivni|length }})
+            </summary>
+            <div style="overflow-x: auto; margin-top:12px;">
+            <table class="pozice-table pozice-inactive">
+                <thead>
+                    <tr>
+                        <th>Pozice</th>
+                        <th>Kraj</th>
+                        <th>Plat</th>
+                        <th>Skenu</th>
+                        <th>Obdobi</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in detail.pozice_neaktivni %}
+                    <tr>
+                        <td>
+                            <a href="{{ p.url }}" target="_blank" style="color:#888; text-decoration:none;">
+                                {{ p.pozice }}
+                            </a>
+                        </td>
+                        <td>{{ p.kraj }}</td>
+                        <td>
+                            {% if p.plat_text %}
+                            <span style="font-size:0.82em; color:#888;">{{ p.plat_text }}</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ p.pocet_scanu }}x</td>
+                        <td class="text-muted" style="white-space:nowrap;">
+                            {{ p.datum_prvni_scan[:10] }} — {{ p.datum_posledni_scan[:10] }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            </div>
+        </details>
+        {% endif %}
+
+        {% if not detail.pozice_aktivni and not detail.pozice_neaktivni %}
+        <div class="card">
+            <p class="text-muted">Zadne pozice v databazi.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- RIGHT: Decision makers + Outreach -->
+    <div>
+        <!-- Decision makers -->
+        <div class="card">
+            <h2>Decision Makers ({{ detail.decision_makers|length }})</h2>
+            {% if detail.decision_makers %}
+                {% for dm in detail.decision_makers %}
+                <div class="dm-card-detail">
+                    <div class="name">{{ dm.full_name }}</div>
+                    <div class="title">{{ dm.current_title }}</div>
+                    {% if dm.headline and dm.headline != dm.current_title %}
+                    <div style="font-size:0.82em; color:#888; margin-top:2px;">{{ dm.headline }}</div>
+                    {% endif %}
+                    <div class="links">
+                        {% if dm.profile_url %}
+                        <a href="{{ dm.profile_url }}" target="_blank">LinkedIn profil</a>
+                        {% endif %}
+                        {% if dm.email %} · {{ dm.email }}{% endif %}
+                        {% if dm.phone %} · {{ dm.phone }}{% endif %}
+                    </div>
+                    <div style="margin-top:8px;">
+                        <button class="btn btn-primary btn-sm"
+                                onclick="markContacted('{{ detail.firma_norm }}', '{{ detail.firma }}', '{{ dm.full_name }}', '{{ dm.profile_url }}', '{{ detail.kraje[0] if detail.kraje else '' }}')">
+                            Oznacit jako osloveno
+                        </button>
+                        {% if dm.profile_url %}
+                        <a href="{{ dm.profile_url }}" target="_blank" class="btn btn-outline btn-sm">Otevrit LinkedIn</a>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <p class="text-muted">Zadni decision makers nalezeni.</p>
+                <p class="text-muted" style="margin-top:4px; font-size:0.82em;">
+                    Zkontrolujte shodu nazvu firmy nebo pridejte
+                    <a href="/decision-makers" style="color:#6366f1;">rucne</a>.
+                </p>
+            {% endif %}
+        </div>
+
+        <!-- Outreach history -->
+        <div class="card">
+            <h2>Outreach historie</h2>
+            {% if detail.outreach %}
+            <div class="outreach-timeline">
+                {% for o in detail.outreach %}
+                <div class="timeline-item">
+                    <div class="date">{{ o.datum_osloveni[:10] }}</div>
+                    <div class="detail">
+                        <strong>{{ o.kontakt_jmeno }}</strong> — {{ o.kanal }}
+                        <br>
+                        <span class="status-badge status-{{ o.status }}">{{ o.status }}</span>
+                        {% if o.poznamka %}
+                        <br><span class="text-muted">{{ o.poznamka }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-muted">Firma zatim nebyla oslovena.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function markContacted(firmaNorm, firma, kontakt, kontaktUrl, kraj) {
+    const kanal = prompt('Kanal (LinkedIn DM / InMail / Email / Telefon):', 'LinkedIn DM');
+    if (!kanal) return;
+    fetch('/api/mark-contacted', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            firma: firma, firma_norm: firmaNorm,
+            kontakt: kontakt, kontakt_url: kontaktUrl,
+            kanal: kanal, kraj: kraj
+        })
+    }).then(r => r.json()).then(data => {
+        if (data.ok) location.reload();
+    });
+}
+</script>
+{% endblock %}

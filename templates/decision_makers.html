@@ -1,0 +1,226 @@
+{% extends "_layout.html" %}
+{% set active_page = 'dm' %}
+{% block title %}Decision Makers — Sintera Radar{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Region grid */
+    .region-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+                   gap: 10px; margin-bottom: 24px; }
+    .region-card { background: #fff; border-radius: 8px; padding: 12px 16px;
+                   border: 1px solid #e2e2e2; display: flex;
+                   justify-content: space-between; align-items: center; }
+    .region-card.loaded { border-left: 4px solid #22c55e; }
+    .region-card.empty-region { border-left: 4px solid #d4d4d4; opacity: 0.6; }
+    .region-card .name { font-weight: 500; }
+    .region-card .count { font-size: 1.2em; font-weight: 700; color: #6366f1; }
+
+    /* Upload form */
+    .upload-box { background: #fff; border: 2px dashed #6366f1; border-radius: 12px;
+                  padding: 24px; margin-bottom: 24px; }
+    .upload-box h2 { margin-top: 0; }
+    .form-row { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin-top: 12px; }
+    select, input[type="file"] { padding: 8px 12px; border: 1px solid #ccc;
+                                 border-radius: 6px; font-size: 0.95em; }
+    select { min-width: 200px; }
+
+    /* Manual form */
+    .manual-form { background: #fff; border-radius: 10px; padding: 20px;
+                   border: 1px solid #e2e2e2; margin-bottom: 24px; }
+    .manual-form input { padding: 8px 12px; border: 1px solid #ccc;
+                         border-radius: 6px; font-size: 0.9em; width: 100%; }
+    .manual-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+                   gap: 10px; margin: 12px 0; }
+    .manual-grid label { font-size: 0.85em; color: #666; display: block; margin-bottom: 4px; }
+
+    /* Alert */
+    .alert { padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 0.95em; }
+    .alert-success { background: #dcfce7; border: 1px solid #86efac; color: #166534; }
+    .alert-info { background: #dbeafe; border: 1px solid #93bbfd; color: #1e40af; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="main-header">
+    <h1>Decision Makers (LinkedIn)</h1>
+</div>
+
+{% set msg = request.args.get('msg', '') %}
+{% if msg == 'ok' %}
+<div class="alert alert-success">
+    Importovano {{ request.args.get('imported', 0) }} kontaktu
+    {% if request.args.get('skipped', '0') != '0' %}
+        ({{ request.args.get('skipped') }} aktualizovano z jinych regionu)
+    {% endif %}
+</div>
+{% elif msg == 'added' %}
+<div class="alert alert-success">Kontakt pridan.</div>
+{% endif %}
+
+<!-- Stats -->
+<div class="stats-row">
+    <div class="stat-card purple">
+        <div class="number">{{ dm_stats.total }}</div>
+        <div class="label">Decision makers celkem</div>
+    </div>
+    <div class="stat-card blue">
+        <div class="number">{{ dm_stats.per_kraj|length }}</div>
+        <div class="label">Nahrane regiony</div>
+    </div>
+</div>
+
+<!-- Region overview -->
+<div class="section-label">Regiony</div>
+{% set region_counts = {} %}
+{% for r in dm_stats.per_kraj %}
+    {% if region_counts.update({r.kraj: r.pocet}) %}{% endif %}
+{% endfor %}
+<div class="region-grid">
+    {% for kod, (nazev, slug) in kraje.items() %}
+    {% set cnt = region_counts.get(nazev, 0) %}
+    <div class="region-card {{ 'loaded' if cnt > 0 else 'empty-region' }}">
+        <span class="name">{{ nazev }}</span>
+        <span class="count">{{ cnt if cnt > 0 else '—' }}</span>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Upload -->
+<div class="upload-box">
+    <h2>Upload LinkedIn CSV</h2>
+    <p class="text-muted">Vyberte region a nahrajte jeden nebo vice pipeline_export souboru z LinkedIn Recruiteru.
+       Vice souboru najednou = automaticke slouceni.</p>
+    <form action="/upload-dm" method="post" enctype="multipart/form-data">
+        <div class="form-row">
+            <div>
+                <label for="kraj">Region:</label>
+                <select name="kraj" id="kraj">
+                    <option value="">— Vyberte —</option>
+                    {% for kod, (nazev, slug) in kraje.items() %}
+                    <option value="{{ nazev }}">{{ nazev }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="csv_files">CSV soubory:</label>
+                <input type="file" name="csv_files" id="csv_files" accept=".csv" multiple>
+            </div>
+            <button type="submit" class="btn btn-primary">Upload</button>
+        </div>
+    </form>
+</div>
+
+<!-- Add manually -->
+<details class="manual-form">
+    <summary style="cursor:pointer; font-weight:600; margin-bottom:8px;">
+        + Pridat kontakt rucne
+    </summary>
+    <form action="/add-dm" method="post">
+        <div class="manual-grid">
+            <div>
+                <label>Jmeno</label>
+                <input name="first_name" placeholder="Jana">
+            </div>
+            <div>
+                <label>Prijmeni</label>
+                <input name="last_name" placeholder="Novakova">
+            </div>
+            <div>
+                <label>Pozice</label>
+                <input name="current_title" placeholder="HR Director">
+            </div>
+            <div>
+                <label>Firma</label>
+                <input name="current_company" placeholder="MAUTING s.r.o.">
+            </div>
+            <div>
+                <label>LinkedIn URL</label>
+                <input name="profile_url" placeholder="https://linkedin.com/in/...">
+            </div>
+            <div>
+                <label>Region</label>
+                <select name="kraj">
+                    {% for kod, (nazev, slug) in kraje.items() %}
+                    <option value="{{ nazev }}">{{ nazev }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary" style="margin-top:12px;">Pridat</button>
+    </form>
+</details>
+
+<!-- Table of decision makers -->
+<div class="section-label">
+    Seznam
+    {% if selected_kraj %} — {{ selected_kraj }}{% endif %}
+    ({{ dms|length }}{% if dms|length >= 200 %}+{% endif %})
+</div>
+
+<div style="margin-bottom:12px;" class="gap-sm">
+    <a href="/decision-makers" class="btn btn-sm {% if not selected_kraj %}btn-primary{% else %}btn-outline{% endif %}">
+        Vsechny
+    </a>
+    {% for r in dm_stats.per_kraj %}
+    <a href="/decision-makers?kraj={{ r.kraj }}"
+       class="btn btn-sm {% if selected_kraj == r.kraj %}btn-primary{% else %}btn-outline{% endif %}">
+        {{ r.kraj }} ({{ r.pocet }})
+    </a>
+    {% endfor %}
+</div>
+
+{% if dms %}
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Jmeno</th>
+                <th>Pozice</th>
+                <th>Firma</th>
+                <th>Lokace</th>
+                <th>Region</th>
+                <th>LinkedIn</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for dm in dms %}
+            <tr>
+                <td class="text-muted">{{ loop.index }}</td>
+                <td>{{ dm.full_name }}</td>
+                <td>{{ dm.current_title }}</td>
+                <td>{{ dm.current_company }}</td>
+                <td>{{ dm.location }}</td>
+                <td>{{ dm.kraj }}</td>
+                <td><a href="{{ dm.profile_url }}" target="_blank">Profil</a></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="alert alert-info">
+    Zadne kontakty{% if selected_kraj %} pro {{ selected_kraj }}{% endif %}.
+    Nahrajte CSV vyse.
+</div>
+{% endif %}
+
+<!-- Upload history -->
+{% if dm_stats.uploads %}
+<div class="section-label">Historie uploadu</div>
+<div class="card">
+    <table>
+        <thead><tr><th>Region</th><th>Pocet</th><th>Datum</th></tr></thead>
+        <tbody>
+            {% for u in dm_stats.uploads %}
+            <tr>
+                <td>{{ u.kraj }}</td>
+                <td>{{ u.pocet }}</td>
+                <td>{{ u.datum }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}

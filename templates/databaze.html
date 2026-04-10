@@ -1,0 +1,233 @@
+{% extends "_layout.html" %}
+{% set active_page = 'databaze' %}
+{% block title %}Databaze — Sintera Radar{% endblock %}
+
+{% block extra_css %}
+<style>
+    .filter-row { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: flex-end; }
+    .filter-row > div { display: flex; flex-direction: column; gap: 0.25rem; }
+    label.field { font-size: 0.78rem; font-weight: 600; color: #555; }
+    select, input[type=number] { padding: 0.45rem 0.65rem; border: 1.5px solid #d1d5db;
+        border-radius: 7px; font-size: 0.88rem; background: #fafafa; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media(max-width: 800px) { .two-col { grid-template-columns: 1fr; } }
+    .job-link { color: #6366f1; text-decoration: none; font-weight: 600; }
+    .job-link:hover { text-decoration: underline; }
+    .salary { display: inline-block; background: #d1fae5; color: #065f46; font-size: 0.73rem;
+              font-weight: 600; padding: 0.15rem 0.45rem; border-radius: 5px; }
+    .scans-high { color: #dc2626; font-weight: 700; }
+    .scans-med  { color: #d97706; font-weight: 700; }
+    .scans-low  { color: #059669; }
+    .empty { text-align: center; padding: 2.5rem; color: #888; }
+    .pager { display: flex; gap: 0.5rem; align-items: center; margin-top: 1rem; }
+    .pager a { padding: 0.35rem 0.75rem; border-radius: 7px; background: #e0e7ff;
+               color: #4338ca; text-decoration: none; font-size: 0.85rem; font-weight: 600; }
+    .pager a:hover { background: #6366f1; color: #fff; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="main-header">
+    <h1>Databaze pozic</h1>
+    <div class="subtitle">Vsechny pozice stahovane z jobs.cz</div>
+</div>
+
+<!-- Stats -->
+<div class="stats-row">
+    <div class="stat-card purple">
+        <div class="number">{{ stats.aktivni }}</div>
+        <div class="label">Aktivnich</div>
+    </div>
+    <div class="stat-card blue">
+        <div class="number">{{ stats.total }}</div>
+        <div class="label">Celkem v DB</div>
+    </div>
+    <div class="stat-card green">
+        <div class="number">{{ stats.nove_dnes }}</div>
+        <div class="label">Novych dnes</div>
+    </div>
+    <div class="stat-card orange">
+        <div class="number">{{ stats.dlouho_aktivni|length }}</div>
+        <div class="label">Problemovych pozic</div>
+    </div>
+    <div class="stat-card red">
+        <div class="number">{{ stats.opakovani_celkem }}</div>
+        <div class="label">Opakovana zadani</div>
+    </div>
+    <div class="stat-card">
+        <div class="number" style="font-size:1em;">{{ stats.posledni_scan[:16] if stats.posledni_scan != '—' else '—' }}</div>
+        <div class="label">Posledni scan</div>
+    </div>
+</div>
+
+<!-- Summary cards -->
+<div class="two-col">
+    <!-- Top firmy -->
+    <div class="card">
+        <h2>Top firmy — pocet aktivnich inzeratu</h2>
+        <table>
+            <thead><tr><th>#</th><th>Firma</th><th>Inzeratu</th><th>Max. opakovani</th></tr></thead>
+            <tbody>
+                {% for f in stats.top_firmy %}
+                <tr>
+                    <td class="text-muted">{{ loop.index }}</td>
+                    <td>{{ f.firma }}</td>
+                    <td><strong>{{ f.pocet_inzeratu }}</strong></td>
+                    <td>{{ f.max_scanu }}x</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="4" class="empty">Zatim zadna data</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Kraje -->
+    <div class="card">
+        <h2>Aktivni nabidky po krajich</h2>
+        <table>
+            <thead><tr><th>Kraj</th><th>Aktivnich nabidek</th></tr></thead>
+            <tbody>
+                {% for k in stats.kraje_stats %}
+                <tr><td>{{ k.kraj }}</td><td><strong>{{ k.pocet }}</strong></td></tr>
+                {% else %}
+                <tr><td colspan="2" class="empty">Zatim zadna data</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Opakovane vypsane pozice -->
+{% if stats.opakovane_pozice %}
+<div class="card">
+    <h2>Opakovane vypsane pozice — firma zkusila znovu (do 180 dni)</h2>
+    <p class="text-muted" style="margin-bottom:0.75rem;">
+        Tyto pozice byly vypsany znovu pod novym inzeratem po tom, co predchozi zanikl.
+        Silny signal, ze firma dlouhodobe nedokaze pozici obsadit.
+    </p>
+    <div style="overflow-x:auto">
+        <table>
+            <thead>
+                <tr><th>Pozice</th><th>Firma</th><th>Kraj</th><th>1. pokus od</th><th>Novy pokus od</th><th>Odkaz</th></tr>
+            </thead>
+            <tbody>
+                {% for n in stats.opakovane_pozice %}
+                <tr>
+                    <td><strong>{{ n.pozice }}</strong></td>
+                    <td>{{ n.firma }}</td>
+                    <td>{{ n.kraj }}</td>
+                    <td class="text-muted">{{ n.predchozi_datum_prvni[:10] if n.predchozi_datum_prvni else '—' }}</td>
+                    <td style="color:#059669;font-weight:700;font-size:0.85em;">{{ n.datum_prvni_scan[:10] }}</td>
+                    <td><a class="job-link" href="{{ n.url }}" target="_blank">Otevrit</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Dlouho aktivni -->
+{% if stats.dlouho_aktivni %}
+<div class="card">
+    <h2>Pozice aktivni 4+ skenovani — firma pravdepodobne neobsadi sama</h2>
+    <div style="overflow-x:auto">
+        <table>
+            <thead><tr><th>Pozice</th><th>Firma</th><th>Kraj</th><th>Plat</th><th>Skenu</th><th>Poprve videno</th></tr></thead>
+            <tbody>
+                {% for n in stats.dlouho_aktivni %}
+                <tr>
+                    <td><a class="job-link" href="{{ n.url }}" target="_blank">{{ n.pozice }}</a></td>
+                    <td>{{ n.firma }}</td>
+                    <td>{{ n.kraj }}</td>
+                    <td>{% if n.plat_text %}<span class="salary">{{ n.plat_text }}</span>{% endif %}</td>
+                    <td class="{% if n.pocet_scanu >= 8 %}scans-high{% elif n.pocet_scanu >= 5 %}scans-med{% else %}scans-low{% endif %}">
+                        {{ n.pocet_scanu }}x
+                    </td>
+                    <td class="text-muted">{{ n.datum_prvni_scan[:10] }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Filter + full table -->
+<div class="card">
+    <h2>Vsechny zaznamy v databazi</h2>
+    <form method="GET" action="/databaze">
+        <div class="filter-row" style="margin-bottom:1rem">
+            <div>
+                <label class="field">Kraj</label>
+                <select name="kraj">
+                    <option value="">Vsechny</option>
+                    {% for kod, (nazev, slug) in kraje.items() %}
+                    <option value="{{ nazev }}" {% if nazev == kraj %}selected{% endif %}>{{ nazev }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="field">Min. pocet skenu</label>
+                <input type="number" name="min_scanu" min="0" value="{{ min_scanu }}" style="width:90px">
+            </div>
+            <div>
+                <label class="field">Stav</label>
+                <select name="aktivni">
+                    <option value="">Vse</option>
+                    <option value="1" {% if aktivni %}selected{% endif %}>Pouze aktivni</option>
+                </select>
+            </div>
+            <div style="padding-top:1.3rem">
+                <button type="submit" class="btn btn-primary">Filtrovat</button>
+            </div>
+            <div style="padding-top:1.3rem">
+                <a href="/export-db" class="btn btn-outline">Export CSV</a>
+            </div>
+        </div>
+    </form>
+
+    <div style="overflow-x:auto">
+        <table>
+            <thead>
+                <tr>
+                    <th>Pozice</th><th>Firma</th><th>Kraj</th><th>Misto</th>
+                    <th>Plat</th><th>Skenu</th><th>Poprve</th><th>Naposledy</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for n in rows %}
+                <tr>
+                    <td><a class="job-link" href="{{ n['url'] }}" target="_blank">{{ n['pozice'] }}</a></td>
+                    <td>{{ n['firma'] }}</td>
+                    <td>{{ n['kraj'] }}</td>
+                    <td>{{ n['misto'] }}</td>
+                    <td>{% if n['plat_text'] %}<span class="salary">{{ n['plat_text'] }}</span>{% endif %}</td>
+                    <td class="{% if n['pocet_scanu'] >= 8 %}scans-high{% elif n['pocet_scanu'] >= 5 %}scans-med{% else %}scans-low{% endif %}">
+                        {{ n['pocet_scanu'] }}x
+                    </td>
+                    <td class="text-muted" style="font-size:0.78em;">{{ n['datum_prvni_scan'][:10] }}</td>
+                    <td class="text-muted" style="font-size:0.78em;">{{ n['datum_posledni_scan'][:10] }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="8" class="empty">
+                    Databaze je prazdna. Spustte hledani a zaskrtnete "Ulozit do databaze".
+                </td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Paginace -->
+    {% if rows|length == 100 %}
+    <div class="pager">
+        {% if offset >= 100 %}
+        <a href="?kraj={{ kraj }}&min_scanu={{ min_scanu }}&aktivni={{ '1' if aktivni else '' }}&offset={{ offset - 100 }}">Predchozi</a>
+        {% endif %}
+        <span class="text-muted">Strana {{ (offset // 100) + 1 }}</span>
+        <a href="?kraj={{ kraj }}&min_scanu={{ min_scanu }}&aktivni={{ '1' if aktivni else '' }}&offset={{ offset + 100 }}">Dalsi</a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

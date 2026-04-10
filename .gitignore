@@ -1,0 +1,22 @@
+# Data files (contain your actual scraped data + contacts)
+data/jobs.db
+data/jobs.db-shm
+data/jobs.db-wal
+data/export.csv
+data/export_full.csv
+data/scheduler.log
+
+# Environment
+.env
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Old CSV exports
+python_praha.csv

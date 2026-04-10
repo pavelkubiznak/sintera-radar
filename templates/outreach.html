@@ -1,0 +1,104 @@
+{% extends "_layout.html" %}
+{% set active_page = 'outreach' %}
+{% block title %}Outreach CRM — Sintera Radar{% endblock %}
+
+{% block extra_css %}
+<style>
+    .filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+    select.inline { padding: 3px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.85em; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="main-header">
+    <h1>Outreach CRM</h1>
+</div>
+
+<div class="stats-row">
+    <div class="stat-card purple">
+        <div class="number">{{ o_stats.total }}</div>
+        <div class="label">Celkem osloveno</div>
+    </div>
+    {% for s in o_stats.per_status %}
+    <div class="stat-card">
+        <div class="number">{{ s.pocet }}</div>
+        <div class="label">{{ s.status }}</div>
+    </div>
+    {% endfor %}
+</div>
+
+<div class="filters">
+    <a href="/outreach" class="btn btn-sm {% if not status_filter %}btn-primary{% else %}btn-outline{% endif %}">Vse</a>
+    {% for s in OUTREACH_STATUSES %}
+    <a href="/outreach?status={{ s }}" class="btn btn-sm {% if status_filter == s %}btn-primary{% else %}btn-outline{% endif %}">{{ s }}</a>
+    {% endfor %}
+</div>
+
+{% if records %}
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Firma</th>
+                <th>Kontakt</th>
+                <th>Kanal</th>
+                <th>Status</th>
+                <th>Poznamka</th>
+                <th>Datum</th>
+                <th>Akce</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in records %}
+            <tr id="row-{{ r.id }}">
+                <td class="text-muted">{{ r.id }}</td>
+                <td><strong>{{ r.firma }}</strong></td>
+                <td>
+                    {% if r.kontakt_url %}
+                    <a href="{{ r.kontakt_url }}" target="_blank">{{ r.kontakt_jmeno }}</a>
+                    {% else %}
+                    {{ r.kontakt_jmeno }}
+                    {% endif %}
+                </td>
+                <td>{{ r.kanal }}</td>
+                <td>
+                    <span class="status-badge status-{{ r.status }}">{{ r.status }}</span>
+                </td>
+                <td style="max-width:200px;" class="text-muted">{{ r.poznamka }}</td>
+                <td class="text-muted">{{ r.datum_osloveni[:10] }}</td>
+                <td>
+                    <select class="inline" onchange="updateStatus({{ r.id }}, this.value)">
+                        <option value="">Zmenit...</option>
+                        {% for s in OUTREACH_STATUSES %}
+                        <option value="{{ s }}" {% if r.status == s %}disabled{% endif %}>{{ s }}</option>
+                        {% endfor %}
+                    </select>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="card" style="text-align:center; padding:40px;">
+    <p class="text-muted">Zatim zadne zaznamy.
+       Oslovte firmy pres <a href="/radar" style="color:#6366f1;">Radar</a>
+       nebo <a href="/batch" style="color:#6366f1;">Batch zpravy</a>.</p>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function updateStatus(id, status) {
+    if (!status) return;
+    const poznamka = prompt('Poznamka (volitelne):') || '';
+    fetch('/api/update-outreach', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id, status, poznamka})
+    }).then(r => r.json()).then(() => location.reload());
+}
+</script>
+{% endblock %}

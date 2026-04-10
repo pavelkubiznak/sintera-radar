@@ -1,0 +1,92 @@
+<!-- Single match card — included from radar.html -->
+<div class="match-card" id="card-{{ m.firma_norm }}">
+    <div class="match-header">
+        <div>
+            <div class="match-firma">
+                <a class="firma-link" href="/firma/{{ m.firma_norm }}">{{ m.firma }}</a>
+            </div>
+            <div class="match-meta">
+                {{ m.kraje|join(', ') }} —
+                {{ m.pocet_pozic }} {{ 'pozice' if m.pocet_pozic < 5 else 'pozic' }}
+                <span class="match-score">({{ m.match_type }}, {{ (m.match_score * 100)|int }}%)</span>
+            </div>
+        </div>
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+            {% if m.signal == 'Opakovaně neobsazují' %}
+            <span class="signal signal-red">{{ m.signal }}</span>
+            {% elif m.signal == 'Dlouhodobě hledají' %}
+            <span class="signal signal-orange">{{ m.signal }}</span>
+            {% elif m.signal == 'Rozšiřují tým' %}
+            <span class="signal signal-blue">{{ m.signal }}</span>
+            {% else %}
+            <span class="signal signal-green">{{ m.signal }}</span>
+            {% endif %}
+            {% if m.outreach_status %}
+            <span class="signal" style="background:#e0e7ff; color:#4338ca;">{{ m.outreach_status }}</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="match-body">
+        <!-- Positions -->
+        <div>
+            <h2 style="font-size:0.9em; margin:0 0 8px; color:#888;">Otevrene pozice</h2>
+            <ul class="pozice-list">
+                {% for p in m.pozice[:8] %}
+                <li>
+                    <a href="{{ p.url }}" target="_blank" style="color:#333; text-decoration:none;">
+                        {{ p.pozice }}
+                    </a>
+                    {% if p.predchozi_job_id %}
+                    <span class="pozice-repeated">OPAKOVANE</span>
+                    {% endif %}
+                    <br>
+                    <span style="color:#888; font-size:0.8em;">
+                        {% if p.datum_vydani %}od {{ p.datum_vydani }}{% endif %}
+                        {% if p.pocet_scanu and p.pocet_scanu > 1 %} · {{ p.pocet_scanu }} skenu{% endif %}
+                        {% if p.plat_text %} · {{ p.plat_text }}{% endif %}
+                    </span>
+                </li>
+                {% endfor %}
+                {% if m.pozice|length > 8 %}
+                <li style="color:#888; font-style:italic;">... a dalsich {{ m.pozice|length - 8 }}</li>
+                {% endif %}
+            </ul>
+        </div>
+
+        <!-- Decision makers -->
+        <div>
+            <h2 style="font-size:0.9em; margin:0 0 8px; color:#888;">Kontakty</h2>
+            {% for dm in m.decision_makers[:4] %}
+            <div class="dm-card" {% if not loop.first %}style="margin-top:8px;"{% endif %}>
+                <div class="dm-name">{{ dm.full_name }}</div>
+                <div class="dm-title">{{ dm.current_title }}</div>
+                <div class="dm-link">
+                    <a href="{{ dm.profile_url }}" target="_blank">LinkedIn profil</a>
+                    {% if dm.email %} | {{ dm.email }}{% endif %}
+                    {% if dm.phone %} | {{ dm.phone }}{% endif %}
+                </div>
+            </div>
+            {% endfor %}
+            {% if m.decision_makers|length > 4 %}
+            <p style="color:#888; font-size:0.85em; margin-top:8px;">
+                + dalsich {{ m.decision_makers|length - 4 }} kontaktu
+            </p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="match-actions">
+        <button class="btn btn-primary" onclick="openBrief('{{ m.firma_norm }}')">
+            Pripravit outreach brief
+        </button>
+        <a href="{{ m.decision_makers[0].profile_url }}" target="_blank" class="btn btn-outline">
+            Otevrit LinkedIn
+        </a>
+        {% if not m.outreach_status %}
+        <button class="btn btn-outline" onclick="markContacted('{{ m.firma_norm }}', '{{ m.firma }}', '{{ m.decision_makers[0].full_name }}')">
+            Oznacit jako osloveno
+        </button>
+        {% endif %}
+    </div>
+</div>

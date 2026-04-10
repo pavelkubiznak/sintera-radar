@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Sintera Radar{% endblock %}</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+               background: #f5f5f5; color: #333; display: flex; min-height: 100vh; }
+
+        /* Sidebar */
+        .sidebar { width: 220px; background: #1e1b4b; color: #c7d2fe; padding: 0;
+                   position: fixed; top: 0; left: 0; bottom: 0; overflow-y: auto;
+                   z-index: 100; }
+        .sidebar-brand { padding: 20px 16px 16px; border-bottom: 1px solid #312e81; }
+        .sidebar-brand h1 { font-size: 1.15em; color: #fff; font-weight: 700; }
+        .sidebar-brand .sub { font-size: 0.75em; color: #818cf8; margin-top: 2px; }
+
+        .sidebar-section { padding: 12px 0 4px; }
+        .sidebar-section-label { font-size: 0.7em; text-transform: uppercase;
+                                  letter-spacing: 1px; color: #6366f1; padding: 0 16px;
+                                  margin-bottom: 4px; font-weight: 600; }
+        .sidebar a { display: flex; align-items: center; gap: 10px;
+                     padding: 9px 16px; color: #c7d2fe; text-decoration: none;
+                     font-size: 0.88em; transition: background 0.15s; }
+        .sidebar a:hover { background: #312e81; color: #fff; }
+        .sidebar a.active { background: #4338ca; color: #fff; font-weight: 600; }
+        .sidebar a .icon { width: 18px; text-align: center; font-size: 0.9em; }
+        .sidebar a .badge { margin-left: auto; background: #6366f1; color: #fff;
+                            padding: 1px 8px; border-radius: 10px; font-size: 0.75em;
+                            font-weight: 600; }
+
+        /* Main content */
+        .main { margin-left: 220px; flex: 1; padding: 24px 32px; min-width: 0; }
+        .main-header { margin-bottom: 24px; }
+        .main-header h1 { font-size: 1.5em; font-weight: 700; }
+        .main-header .subtitle { color: #888; font-size: 0.9em; margin-top: 4px; }
+
+        /* Stats */
+        .stats-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
+        .stat-card { background: #fff; border-radius: 10px; padding: 16px 20px;
+                     border: 1px solid #e2e2e2; min-width: 130px; flex: 1; }
+        .stat-card .number { font-size: 1.8em; font-weight: 700; }
+        .stat-card .label { font-size: 0.82em; color: #888; margin-top: 2px; }
+        .stat-card.purple .number { color: #6366f1; }
+        .stat-card.green .number { color: #22c55e; }
+        .stat-card.orange .number { color: #f59e0b; }
+        .stat-card.red .number { color: #ef4444; }
+        .stat-card.blue .number { color: #3b82f6; }
+
+        /* Cards */
+        .card { background: #fff; border-radius: 12px; padding: 20px;
+                border: 1px solid #e2e2e2; margin-bottom: 16px; }
+        .card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+        .card h2 { font-size: 1.1em; margin-bottom: 12px; }
+        .card h3 { font-size: 0.95em; color: #444; margin-bottom: 8px; }
+
+        /* Signals */
+        .signal { display: inline-block; padding: 3px 10px; border-radius: 12px;
+                  font-size: 0.78em; font-weight: 600; }
+        .signal-red { background: #fee2e2; color: #dc2626; }
+        .signal-orange { background: #fff7ed; color: #ea580c; }
+        .signal-blue { background: #dbeafe; color: #2563eb; }
+        .signal-green { background: #dcfce7; color: #16a34a; }
+        .signal-gray { background: #f3f4f6; color: #6b7280; }
+
+        /* Buttons */
+        .btn { padding: 7px 16px; border: none; border-radius: 6px; font-size: 0.85em;
+               cursor: pointer; font-weight: 500; text-decoration: none; display: inline-block; }
+        .btn-primary { background: #6366f1; color: #fff; }
+        .btn-primary:hover { background: #4f46e5; }
+        .btn-outline { background: #fff; border: 1px solid #ccc; color: #555; }
+        .btn-outline:hover { background: #f5f5f5; }
+        .btn-green { background: #22c55e; color: #fff; }
+        .btn-sm { padding: 4px 12px; font-size: 0.8em; }
+
+        /* Table */
+        table { width: 100%; border-collapse: collapse; }
+        th { background: #f8f8f8; padding: 8px 12px; text-align: left;
+             font-size: 0.82em; color: #666; font-weight: 600; }
+        td { padding: 8px 12px; border-top: 1px solid #f0f0f0; font-size: 0.88em; }
+        tr:hover { background: #fafafa; }
+        td a { color: #6366f1; text-decoration: none; }
+        td a:hover { text-decoration: underline; }
+
+        /* Alert boxes */
+        .alert-box { border-radius: 10px; padding: 16px 20px; margin-bottom: 16px; }
+        .alert-box.surge { background: #fff7ed; border: 1px solid #fdba74; }
+        .alert-box.recommend { background: #f0fdf4; border: 1px solid #86efac; }
+        .alert-box.info { background: #eff6ff; border: 1px solid #93c5fd; }
+        .alert-box h3 { font-size: 0.95em; margin-bottom: 8px; }
+
+        /* Section label */
+        .section-label { font-size: 0.82em; font-weight: 600; color: #888;
+                         text-transform: uppercase; letter-spacing: 0.5px;
+                         margin: 20px 0 12px; padding-bottom: 6px;
+                         border-bottom: 2px solid #e2e2e2; }
+
+        /* Firma link */
+        a.firma-link { color: #333; text-decoration: none; font-weight: 600; }
+        a.firma-link:hover { color: #6366f1; text-decoration: underline; }
+
+        /* Status badges */
+        .status-badge { display: inline-block; padding: 2px 10px; border-radius: 10px;
+                        font-size: 0.78em; font-weight: 600; }
+        .status-odeslano { background: #dbeafe; color: #2563eb; }
+        .status-zobrazeno { background: #fef3c7; color: #d97706; }
+        .status-odpovedela { background: #dcfce7; color: #16a34a; }
+        .status-schuzka { background: #fae8ff; color: #a855f7; }
+        .status-klient { background: #d1fae5; color: #059669; }
+        .status-odmitnuto { background: #fee2e2; color: #dc2626; }
+        .status-follow_up { background: #fff7ed; color: #ea580c; }
+
+        /* Responsive */
+        @media (max-width: 800px) {
+            .sidebar { width: 60px; }
+            .sidebar-brand h1, .sidebar-brand .sub, .sidebar-section-label,
+            .sidebar a span:not(.icon), .sidebar a .badge { display: none; }
+            .sidebar a { justify-content: center; padding: 12px; }
+            .main { margin-left: 60px; padding: 16px; }
+        }
+
+        /* Utility */
+        .text-muted { color: #888; font-size: 0.85em; }
+        .mb-0 { margin-bottom: 0; }
+        .mt-1 { margin-top: 8px; }
+        .gap-sm { display: flex; gap: 8px; flex-wrap: wrap; }
+    </style>
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <div class="sidebar">
+        <div class="sidebar-brand">
+            <h1>Sintera</h1>
+            <div class="sub">Radar & Akvizice</div>
+        </div>
+
+        <div class="sidebar-section">
+            <a href="/" class="{% if active_page == 'dashboard' %}active{% endif %}">
+                <span class="icon">&#9673;</span> <span>Dashboard</span>
+            </a>
+        </div>
+
+        <div class="sidebar-section">
+            <div class="sidebar-section-label">Data</div>
+            <a href="/scraper" class="{% if active_page == 'scraper' %}active{% endif %}">
+                <span class="icon">&#128269;</span> <span>Scraper</span>
+            </a>
+            <a href="/databaze" class="{% if active_page == 'databaze' %}active{% endif %}">
+                <span class="icon">&#128451;</span> <span>Databaze pozic</span>
+            </a>
+            <a href="/decision-makers" class="{% if active_page == 'dm' %}active{% endif %}">
+                <span class="icon">&#128101;</span> <span>Decision Makers</span>
+            </a>
+        </div>
+
+        <div class="sidebar-section">
+            <div class="sidebar-section-label">Akce</div>
+            <a href="/radar" class="{% if active_page == 'radar' %}active{% endif %}">
+                <span class="icon">&#128225;</span> <span>Radar</span>
+            </a>
+            <a href="/batch" class="{% if active_page == 'batch' %}active{% endif %}">
+                <span class="icon">&#9993;</span> <span>Batch zpravy</span>
+            </a>
+            <a href="/outreach" class="{% if active_page == 'outreach' %}active{% endif %}">
+                <span class="icon">&#128203;</span> <span>Outreach CRM</span>
+            </a>
+        </div>
+    </div>
+
+    <div class="main">
+        {% block content %}{% endblock %}
+    </div>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

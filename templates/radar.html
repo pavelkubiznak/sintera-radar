@@ -1,0 +1,231 @@
+{% extends "_layout.html" %}
+{% set active_page = 'radar' %}
+{% block title %}Radar — Sintera Radar{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Match card */
+    .match-card { background: #fff; border-radius: 12px; padding: 20px;
+                  border: 1px solid #e2e2e2; margin-bottom: 16px;
+                  transition: box-shadow 0.2s; }
+    .match-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+    .match-header { display: flex; justify-content: space-between;
+                    align-items: start; flex-wrap: wrap; gap: 8px; }
+    .match-firma { font-size: 1.15em; font-weight: 700; }
+    .match-meta { font-size: 0.85em; color: #888; margin-top: 4px; }
+
+    .match-body { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 14px; }
+    @media (max-width: 700px) { .match-body { grid-template-columns: 1fr; } }
+
+    .pozice-list { list-style: none; }
+    .pozice-list li { padding: 4px 0; font-size: 0.9em; border-bottom: 1px solid #f5f5f5; }
+    .pozice-list li:last-child { border: none; }
+    .pozice-weeks { color: #888; font-size: 0.85em; }
+    .pozice-repeated { color: #dc2626; font-weight: 600; font-size: 0.8em; }
+
+    .dm-card { background: #f8f7ff; border-radius: 8px; padding: 12px; }
+    .dm-name { font-weight: 600; }
+    .dm-title { font-size: 0.9em; color: #666; }
+    .dm-link { font-size: 0.85em; }
+    .dm-link a { color: #6366f1; text-decoration: none; }
+    .dm-link a:hover { text-decoration: underline; }
+
+    .match-actions { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .match-score { font-size: 0.8em; color: #aaa; }
+
+    /* Brief modal */
+    .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%;
+                     height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;
+                     justify-content: center; align-items: center; }
+    .modal-overlay.active { display: flex; }
+    .modal { background: #fff; border-radius: 12px; padding: 24px; max-width: 700px;
+             width: 90%; max-height: 80vh; overflow-y: auto; }
+    .modal h3 { margin-bottom: 12px; }
+    .modal pre { background: #f5f5f5; padding: 16px; border-radius: 8px;
+                 white-space: pre-wrap; font-size: 0.9em; line-height: 1.5; }
+    .modal .btn-row { margin-top: 16px; display: flex; gap: 8px; }
+
+    .empty-state { background: #fff; border-radius: 12px; padding: 40px;
+                   text-align: center; border: 1px solid #e2e2e2; }
+    .empty-state p { color: #888; margin-top: 8px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="main-header">
+    <h1>Sintera Radar</h1>
+    <div class="subtitle">Firmy z jobs.cz propojene s vasi databazi decision makeru z LinkedIn</div>
+</div>
+
+<!-- Stats -->
+<div class="stats-row">
+    <div class="stat-card green">
+        <div class="number">{{ result.stats.matched }}</div>
+        <div class="label">Propojene firmy</div>
+    </div>
+    <div class="stat-card orange">
+        <div class="number">{{ result.stats.unmatched_jobs }}</div>
+        <div class="label">Firmy bez kontaktu</div>
+    </div>
+    <div class="stat-card purple">
+        <div class="number">{{ dm_stats.total }}</div>
+        <div class="label">Decision makers celkem</div>
+    </div>
+    <div class="stat-card blue">
+        <div class="number">{{ o_stats.total }}</div>
+        <div class="label">Osloveno</div>
+    </div>
+</div>
+
+<!-- SURGE ALERTS -->
+{% if surges %}
+<div class="alert-box surge">
+    <h3 style="color:#ea580c;">Nahly narust pozic tento tyden</h3>
+    {% for s in surges %}
+    <div style="margin-bottom:8px;">
+        <strong>{{ s.firma }}</strong> ({{ s.kraj }})
+        — <span style="color:#ea580c; font-weight:700;">+{{ s.nove_pozice }} novych pozic</span>
+        <br><span class="text-muted">
+            {{ s.pozice_list[:3]|join(', ') }}{% if s.pozice_list|length > 3 %} +dalsi{% endif %}
+        </span>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- WEEKLY RECOMMENDATIONS -->
+{% if recommendations %}
+<div class="alert-box recommend">
+    <h3 style="color:#16a34a;">
+        Doporuceni na tento tyden (top 3 za region, bez oslovenych)
+    </h3>
+    <p class="text-muted" style="margin-bottom:12px;">
+        <a href="/batch" style="color:#6366f1;">Otevrit Batch zpravy</a> pro hotove texty ke zkopirovani
+    </p>
+    {% set current_kraj = namespace(val='') %}
+    {% for r in recommendations %}
+        {% if r.doporuceny_kraj != current_kraj.val %}
+            {% if not loop.first %}</div>{% endif %}
+            <div style="margin-top:8px;">
+            <div style="font-size:0.8em; font-weight:600; color:#888; text-transform:uppercase;
+                        margin-bottom:4px;">{{ r.doporuceny_kraj }}</div>
+            {% set current_kraj.val = r.doporuceny_kraj %}
+        {% endif %}
+        <div style="margin-left:12px; margin-bottom:4px; font-size:0.9em;">
+            <a class="firma-link" href="/firma/{{ r.firma_norm }}"><strong>{{ r.firma }}</strong></a>
+            — {{ r.pocet_pozic }} pozic
+            — {{ r.decision_makers[0].full_name if r.decision_makers else '?' }}
+            <span class="text-muted">({{ r.signal }})</span>
+        </div>
+    {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+{% if not result.matches %}
+<div class="empty-state">
+    <h2>Zadne shody</h2>
+    <p>Nahrajte decision makers v sekci
+        <a href="/decision-makers" style="color:#6366f1;">Decision Makers</a>
+        a spustte scraper pro ziskani pozic z jobs.cz.
+    </p>
+</div>
+{% else %}
+
+<!-- HIGH SIGNAL -->
+{% set high = [] %}
+{% set watch = [] %}
+{% set new_on_radar = [] %}
+{% for m in result.matches %}
+    {% if m.signal_score >= 15 %}
+        {% if high.append(m) %}{% endif %}
+    {% elif m.signal_score >= 8 %}
+        {% if watch.append(m) %}{% endif %}
+    {% else %}
+        {% if new_on_radar.append(m) %}{% endif %}
+    {% endif %}
+{% endfor %}
+
+{% if high %}
+<div class="section-label">Vysoky signal — jednat tento tyden ({{ high|length }})</div>
+{% for m in high %}
+{% include "_match_card.html" %}
+{% endfor %}
+{% endif %}
+
+{% if watch %}
+<div class="section-label">Sledovat — rostouci aktivita ({{ watch|length }})</div>
+{% for m in watch %}
+{% include "_match_card.html" %}
+{% endfor %}
+{% endif %}
+
+{% if new_on_radar %}
+<div class="section-label">Nove na radaru ({{ new_on_radar|length }})</div>
+{% for m in new_on_radar %}
+{% include "_match_card.html" %}
+{% endfor %}
+{% endif %}
+
+{% endif %}
+
+<!-- Brief modal -->
+<div class="modal-overlay" id="briefModal">
+    <div class="modal">
+        <h3 id="briefTitle">Outreach Brief</h3>
+        <pre id="briefContent">Nacitam...</pre>
+        <div class="btn-row">
+            <button class="btn btn-primary" onclick="copyBrief()">Kopirovat do schranky</button>
+            <button class="btn btn-outline" onclick="closeBrief()">Zavrit</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function openBrief(firmaNorm) {
+    document.getElementById('briefModal').classList.add('active');
+    document.getElementById('briefContent').textContent = 'Nacitam...';
+    fetch('/api/outreach-brief/' + encodeURIComponent(firmaNorm))
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('briefContent').textContent = data.brief;
+            document.getElementById('briefTitle').textContent = 'Brief: ' + data.data.firma;
+        })
+        .catch(e => {
+            document.getElementById('briefContent').textContent = 'Chyba: ' + e;
+        });
+}
+function closeBrief() {
+    document.getElementById('briefModal').classList.remove('active');
+}
+function copyBrief() {
+    const text = document.getElementById('briefContent').textContent;
+    navigator.clipboard.writeText(text).then(() => {
+        const btn = event.target;
+        btn.textContent = 'Zkopirovano!';
+        setTimeout(() => btn.textContent = 'Kopirovat do schranky', 2000);
+    });
+}
+document.getElementById('briefModal').addEventListener('click', function(e) {
+    if (e.target === this) closeBrief();
+});
+
+function markContacted(firmaNorm, firma, kontakt) {
+    const kanal = prompt('Kanal (LinkedIn DM / InMail / Email / Telefon):', 'LinkedIn DM');
+    if (!kanal) return;
+    fetch('/api/mark-contacted', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({firma: firma, firma_norm: firmaNorm, kontakt: kontakt, kanal: kanal})
+    }).then(r => r.json()).then(data => {
+        const card = document.getElementById('card-' + firmaNorm);
+        if (card) {
+            const btn = card.querySelector('[onclick^="markContacted"]');
+            if (btn) { btn.textContent = 'Zaznamenano'; btn.disabled = true; btn.style.opacity = '0.5'; }
+        }
+    });
+}
+</script>
+{% endblock %}

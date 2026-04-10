@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS launchd plist — automatické spouštění scheduleru při startu.
+
+  Instalace (jednou):
+    cp com.sintera.jobsscraper.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.sintera.jobsscraper.plist
+
+  Odinstalace:
+    launchctl unload ~/Library/LaunchAgents/com.sintera.jobsscraper.plist
+    rm ~/Library/LaunchAgents/com.sintera.jobsscraper.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.sintera.jobsscraper</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/pavelkubiznak/jobs-scraper/scheduler.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/pavelkubiznak/jobs-scraper</string>
+
+  <!-- Spustit automaticky při přihlášení -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Restart při pádu -->
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Logy -->
+  <key>StandardOutPath</key>
+  <string>/Users/pavelkubiznak/jobs-scraper/data/launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/pavelkubiznak/jobs-scraper/data/launchd_error.log</string>
+
+  <!-- Čekat 30s po přihlášení než se spustí (síť musí být připravena) -->
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+</dict>
+</plist>

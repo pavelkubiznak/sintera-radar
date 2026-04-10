@@ -1,0 +1,125 @@
+{% extends "_layout.html" %}
+{% set active_page = 'batch' %}
+{% block title %}Batch zpravy — Sintera Radar{% endblock %}
+
+{% block extra_css %}
+<style>
+    .controls { display: flex; gap: 12px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
+    .controls label { font-size: 0.9em; color: #666; }
+    .controls select { padding: 6px 12px; border: 1px solid #ccc; border-radius: 6px; }
+    .message-card { background: #fff; border-radius: 12px; padding: 20px;
+                    border: 1px solid #e2e2e2; margin-bottom: 16px; }
+    .message-header { display: flex; justify-content: space-between;
+                      align-items: start; flex-wrap: wrap; gap: 8px;
+                      margin-bottom: 12px; padding-bottom: 12px;
+                      border-bottom: 1px solid #f0f0f0; }
+    .message-firma { font-size: 1.1em; font-weight: 700; }
+    .message-meta { font-size: 0.85em; color: #888; }
+    .message-text { background: #f8f7ff; border-radius: 8px; padding: 16px;
+                    white-space: pre-wrap; font-size: 0.9em; line-height: 1.6;
+                    border: 1px solid #e8e5ff; }
+    .message-actions { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .count-badge { background: #6366f1; color: #fff; padding: 2px 10px;
+                   border-radius: 10px; font-size: 0.85em; font-weight: 600; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="main-header">
+    <h1>Batch zpravy <span class="count-badge">{{ messages|length }}</span></h1>
+    <div class="subtitle">Top {{ per_region }} firmy za kazdy region, bez jiz oslovenych.
+        Zkopiruj zpravu — otevri LinkedIn — vloz a posli.</div>
+</div>
+
+<div class="controls">
+    <label>Firem na region:</label>
+    <select onchange="location.href='/batch?per_region='+this.value">
+        {% for n in [1,2,3,5,7,10] %}
+        <option value="{{ n }}" {% if per_region == n %}selected{% endif %}>{{ n }}</option>
+        {% endfor %}
+    </select>
+    <span class="text-muted">
+        Celkem {{ messages|length }} zprav ke zpracovani
+    </span>
+</div>
+
+{% if not messages %}
+<div class="card" style="text-align:center; padding:40px;">
+    <p class="text-muted">Zadne doporuceni — bud jsou vsechny firmy jiz osloveny,
+       nebo nejsou zadne shody. Zkontrolujte <a href="/radar" style="color:#6366f1;">Radar</a>.</p>
+</div>
+{% endif %}
+
+{% for msg in messages %}
+<div class="message-card" id="msg-{{ loop.index }}">
+    <div class="message-header">
+        <div>
+            <div class="message-firma">
+                <a class="firma-link" href="/firma/{{ msg.firma_norm }}">{{ msg.firma }}</a>
+            </div>
+            <div class="message-meta">
+                {{ msg.kraj }} · {{ msg.pocet_pozic }} pozic ·
+                {{ msg.kontakt }} ({{ msg.kontakt_title }})
+            </div>
+        </div>
+        {% if msg.signal == 'Opakovaně neobsazují' %}
+        <span class="signal signal-red">{{ msg.signal }}</span>
+        {% elif msg.signal == 'Dlouhodobě hledají' %}
+        <span class="signal signal-orange">{{ msg.signal }}</span>
+        {% elif msg.signal == 'Rozšiřují tým' %}
+        <span class="signal signal-blue">{{ msg.signal }}</span>
+        {% else %}
+        <span class="signal signal-green">{{ msg.signal }}</span>
+        {% endif %}
+    </div>
+
+    <div class="message-text" id="text-{{ loop.index }}">{{ msg.zprava }}</div>
+
+    <div class="message-actions">
+        <button class="btn btn-primary" onclick="copyMessage({{ loop.index }})">
+            Kopirovat zpravu
+        </button>
+        <a href="{{ msg.linkedin_url }}" target="_blank" class="btn btn-outline">
+            Otevrit LinkedIn profil
+        </a>
+        <button class="btn btn-green" onclick="markSent({{ loop.index }}, '{{ msg.firma }}', '{{ msg.firma_norm }}', '{{ msg.kontakt }}', '{{ msg.linkedin_url }}', '{{ msg.kraj }}')">
+            Oznacit jako odeslano
+        </button>
+    </div>
+</div>
+{% endfor %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function copyMessage(idx) {
+    const text = document.getElementById('text-' + idx).textContent;
+    navigator.clipboard.writeText(text).then(() => {
+        const btn = event.target;
+        btn.textContent = 'Zkopirovano!';
+        btn.style.background = '#22c55e';
+        setTimeout(() => {
+            btn.textContent = 'Kopirovat zpravu';
+            btn.style.background = '#6366f1';
+        }, 2000);
+    });
+}
+
+function markSent(idx, firma, firmaNorm, kontakt, kontaktUrl, kraj) {
+    fetch('/api/mark-contacted', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            firma: firma, firma_norm: firmaNorm,
+            kontakt: kontakt, kontakt_url: kontaktUrl,
+            kanal: 'LinkedIn DM', kraj: kraj
+        })
+    }).then(r => r.json()).then(data => {
+        const card = document.getElementById('msg-' + idx);
+        card.style.opacity = '0.4';
+        card.querySelector('.btn-green').textContent = 'Zaznamenano';
+        card.querySelector('.btn-green').disabled = true;
+    });
+}
+</script>
+{% endblock %}
