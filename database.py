@@ -879,7 +879,7 @@ def radar_matches(min_scanu: int = 1, min_score: float = 0.82, skip_fuzzy: bool 
         job_rows = conn.execute("""
             SELECT job_id, pozice, firma, kraj, obor, plat_text, url,
                    pocet_scanu, datum_prvni_scan, datum_posledni_scan,
-                   datum_vydani, aktivni,
+                   datum_vydani, aktivni, publikovano,
                    predchozi_job_id, predchozi_datum_prvni
             FROM nabidky
             WHERE aktivni = 1 AND firma != '' AND is_agency = 0
@@ -1794,17 +1794,22 @@ def _naturalize_role(raw: str, region: str = "") -> str:
     #   - ALL CAPS words >4 chars → full lowercase (shouted regular words)
     #   - ALL CAPS 2-4 chars → keep (acronyms: IT, PLC, SAP)
     #   - Mixed case → lowercase first letter only (preserve brand casing)
+    #   - Slash-separated tokens (PLC/SCADA) processed per-part
     words = s.split()
     out = []
     for w in words:
-        core = w.strip('(),;:.')
-        if core.isupper() and len(core) >= 2 and core.isalpha():
-            if len(core) <= 4:
-                out.append(w)                     # IT, PLC, SAP — keep
+        parts = w.split('/')
+        cased_parts = []
+        for part in parts:
+            core = part.strip('(),;:.')
+            if core.isupper() and len(core) >= 2 and core.isalpha():
+                if len(core) <= 5:
+                    cased_parts.append(part)          # IT, PLC, SAP, SCADA — keep
+                else:
+                    cased_parts.append(part.lower())   # PROGRAMÁTOR → programátor
             else:
-                out.append(w.lower())             # PROGRAMÁTOR → programátor
-        else:
-            out.append(w[0].lower() + w[1:] if w else w)
+                cased_parts.append(part[0].lower() + part[1:] if part else part)
+        out.append('/'.join(cased_parts))
     s = ' '.join(out)
     # 8. Trim trailing punctuation
     s = s.strip().rstrip('.,;:–—- ')
@@ -2419,6 +2424,249 @@ _PRIORITY_COLORS = {
 }
 
 
+# ── Aktualizované DM template (conversational) ──────────────────
+
+
+def _shorten_firma(name: str) -> str:
+    """Strip legal suffixes for natural company name.
+    'Škoda Auto a.s.' → 'Škoda Auto', 'ABB s.r.o.' → 'ABB'."""
+    result = re.sub(
+        r'[,\s]+(?:'
+        r'a\.?\s*s\.?'
+        r'|s\.?\s*r\.?\s*o\.?'
+        r'|spol\.\s*s\s*r\.?\s*o\.?'
+        r'|SE|k\.?\s*s\.?|v\.?\s*o\.?\s*s\.?'
+        r'|z\.?\s*s\.?|z\.?\s*ú\.?|o\.?\s*p\.?\s*s\.?'
+        r'|příspěvková\s+organizace'
+        r')\s*\.?\s*$',
+        '', name, flags=re.IGNORECASE
+    ).strip().rstrip(',').strip()
+    return result if result else name
+
+
+def _prep_ve(word: str) -> str:
+    """Return 've' or 'v' preposition per Czech phonetic rules."""
+    w = word.strip().lower()
+    if not w:
+        return 'v'
+    # "ve" only before consonant clusters: v/f/s/š/z/ž + consonant
+    vowels = set('aeiouyáéíóúůý')
+    if len(w) >= 2 and w[0] in ('v', 'f', 's', 'š', 'z', 'ž') and w[1] not in vowels:
+        return 've'
+    return 'v'
+
+
+def _detect_gender(dm: dict) -> str:
+    """Detect gender from DM contact. Returns 'm' or 'f'."""
+    last = dm.get("last_name", "").strip()
+    first = dm.get("first_name", "").strip()
+    if not last:
+        full = dm.get("full_name", "").strip()
+        parts = full.split()
+        if len(parts) >= 2:
+            last = parts[-1]
+            first = parts[0] if not first else first
+    clean = re.sub(
+        r'[,\s]+(MBA|PhD|CSc|Ing|Mgr|Bc|DiS|Dr|Ph\.?D\.?)\s*\.?\s*$',
+        '', last, flags=re.IGNORECASE).strip().rstrip(',').strip()
+    low = clean.lower()
+    if (low.endswith("ová") or low.endswith("ova")
+            or low.endswith("ská") or low.endswith("ska")
+            or low.endswith("cká") or low.endswith("cka")
+            or (low.endswith("á") and len(clean) > 2)):
+        return 'f'
+    if first:
+        fl = first.lower().rstrip('.')
+        if fl.endswith("a") or fl.endswith("ie") or fl.endswith("na"):
+            return 'f'
+    return 'm'
+
+
+# Skill keywords: (regex_pattern, genitive_form, category)
+_SKILL_KW = [
+    # Tech
+    (r'\bSAP\b', 'SAPu', 'tech'),
+    (r'\bPLC\b', 'PLC', 'tech'),
+    (r'\bS7\b', 'S7', 'tech'),
+    (r'\bCNC\b', 'CNC', 'tech'),
+    (r'\bERP\b', 'ERP', 'tech'),
+    (r'\bMES\b', 'MES', 'tech'),
+    (r'\bSCADA\b', 'SCADA', 'tech'),
+    (r'\bHMI\b', 'HMI', 'tech'),
+    (r'\bTIA\s+Portal\b', 'TIA Portalu', 'tech'),
+    (r'\bPython\b', 'Pythonu', 'tech'),
+    (r'\bJava\b', 'Javy', 'tech'),
+    (r'\.NET\b', '.NETu', 'tech'),
+    (r'\bC#\b', 'C#', 'tech'),
+    (r'\bC\+\+\b', 'C++', 'tech'),
+    (r'\bSQL\b', 'SQL', 'tech'),
+    (r'\bOracle\b', 'Oracle', 'tech'),
+    (r'\bCAD\b', 'CADu', 'tech'),
+    (r'\bAutoCAD\b', 'AutoCADu', 'tech'),
+    (r'\bSolidWorks?\b', 'SolidWorks', 'tech'),
+    (r'\bInventor\b', 'Inventoru', 'tech'),
+    (r'\bRevit\b', 'Revitu', 'tech'),
+    (r'\bBIM\b', 'BIM', 'tech'),
+    (r'\bLinux\b', 'Linuxu', 'tech'),
+    (r'\bAWS\b', 'AWS', 'tech'),
+    (r'\bAzure\b', 'Azure', 'tech'),
+    (r'\bDocker\b', 'Dockeru', 'tech'),
+    (r'\bKubernetes\b', 'Kubernetes', 'tech'),
+    (r'\bReact\b', 'Reactu', 'tech'),
+    (r'\bAngular\b', 'Angularu', 'tech'),
+    (r'\bPHP\b', 'PHP', 'tech'),
+    (r'\bABAP\b', 'ABAPu', 'tech'),
+    (r'\bSiemens\b', 'Siemens', 'tech'),
+    (r'\bFanuc\b', 'Fanucu', 'tech'),
+    (r'\bHeidenhain\b', 'Heidenhain', 'tech'),
+    # Languages (prefix match — catches all Czech declensions)
+    (r'\bangličtin\w*', 'angličtiny', 'lang'),
+    (r'\banglick', 'angličtiny', 'lang'),
+    (r'\bněmčin\w*', 'němčiny', 'lang'),
+    (r'\bněmeck', 'němčiny', 'lang'),
+    (r'\bfrancouzštin\w*', 'francouzštiny', 'lang'),
+    # Domain
+    (r'\bautomotive\b', 'automotive', 'domain'),
+    (r'\bpharma\b', 'pharma', 'domain'),
+    (r'\benergetik[auy]?\b', 'energetiky', 'domain'),
+    (r'\bstavebnictv[ií]?\b', 'stavebnictví', 'domain'),
+    (r'\blogistik[auy]?\b', 'logistiky', 'domain'),
+    (r'\belektro\b', 'elektro', 'domain'),
+    (r'\bstrojírenstv\w*\b', 'strojírenství', 'domain'),
+    (r'\bpotravinářstv\w*\b', 'potravinářství', 'domain'),
+    (r'\bfinance?\b', 'financí', 'domain'),
+    # Skills / functions
+    (r'\bkvalit[auy]?\b|\bkvalitář\b', 'kvality', 'skill'),
+    (r'\bkonstrukc[eí]\b|\bkonstruktér\b', 'konstrukce', 'skill'),
+    (r'\btechnolog\w*\b', 'technologie', 'skill'),
+    (r'\búčet\w*\b', 'účetnictví', 'skill'),
+    (r'\bcontrolling\b', 'controllingu', 'skill'),
+    (r'\bnákup\w*\b', 'nákupu', 'skill'),
+    (r'\bobchod\w*\b|\bsales\b', 'obchodu', 'skill'),
+    (r'\bmarketing\b', 'marketingu', 'skill'),
+    (r'\bBOZP\b', 'BOZP', 'skill'),
+    (r'\bbezpečnost\w*\b', 'bezpečnosti', 'skill'),
+    (r'\bprojekc[eí]\b', 'projekce', 'skill'),
+    (r'\búdržb[auy]\b', 'údržby', 'skill'),
+    (r'\bvýrob[auy]?\b', 'výroby', 'skill'),
+    (r'\bse[rř][ií]z\w*\b', 'seřizování', 'skill'),
+    (r'\bsvařov\w*\b', 'svařování', 'skill'),
+    (r'\bobráb\w*\b', 'obrábění', 'skill'),
+    (r'\bskladov\w*\b', 'skladování', 'skill'),
+    (r'\bexpedic\w*\b', 'expedice', 'skill'),
+    # Level / condition
+    (r'\bsenior\b', 'seniority', 'level'),
+    (r'\bvedoucí\b|\bvedení\b', 'vedení lidí', 'level'),
+    (r'\bteam\s*lead\b', 'vedení týmu', 'level'),
+    (r'\bsměn\w*\b', 'směnného provozu', 'condition'),
+    (r'\bcertifikac\w*\b', 'certifikací', 'condition'),
+    (r'\bvyhláš\w*\b', 'vyhlášky', 'condition'),
+    (r'\bzákaznick\w*\b', 'zákaznického kontaktu', 'condition'),
+]
+
+
+def _extract_skill_combo(title: str) -> str:
+    """Extract a 2-factor skill combination from position title.
+    Returns 'kombinace X a Y' or empty string if <2 categories found."""
+    # Expand slash-separated terms: "PLC/SCADA" → "PLC SCADA"
+    expanded = re.sub(r'/', ' ', title)
+
+    found = []  # (genitive_form, category)
+    seen_cats = set()
+
+    for pattern, gen_form, cat in _SKILL_KW:
+        if cat in seen_cats:
+            continue
+        if re.search(pattern, expanded, re.IGNORECASE):
+            found.append((gen_form, cat))
+            seen_cats.add(cat)
+            if len(found) >= 2:
+                break
+
+    if len(found) >= 2:
+        return "kombinace {} a {}".format(found[0][0], found[1][0])
+    return ""
+
+
+_BANNED_AKT_RE = re.compile(
+    r'(?:'
+    r'vidím,?\s+(?:že|u\s+vás)'
+    r'|všimla\s+jsem|zachytila\s+jsem'
+    r'|prošla\s+jsem\s+si|dívám\s+se|sleduju'
+    r'|pracuju\s+s|pomáhám\s+firmám'
+    r'|ozývám\s+se'
+    r'|ráda\s+bych|chtěla\s+bych'
+    r'|\bagentur[ay]?\b|\bpersonální\b'
+    r'|\bslužb[auy]?\b|\bnabídk[auy]?\b|\břešení\b'
+    r'|\bkandidát[ůyi]?\b|\bsíť\s+(?:lidí|kandidátů)\b'
+    r'|\bpomoc\b|\bpomůžeme\b'
+    r'|\bspolupráce?\b|\bspolupracovat\b'
+    r'|\bkonzultac[ei]?\b|\baudit\b|\banalýz[auy]?\b'
+    r'|\bdirect\s+search\b|\bsintera\b'
+    r'|\bpošlete\s+mi\s+číslo\b'
+    r'|\bmám\s+pro\s+vás\b'
+    r'|\bviděla\s+jsem,?\s+že\b'
+    r'|\bzdarma\b'
+    r')',
+    re.IGNORECASE,
+)
+
+
+def _missile_message_aktualizovano(dm_contact: dict, pozice_title: str,
+                                    firma: str, combo: str) -> str:
+    """Generate conversational DM for aktualizované positions.
+    Light, human, no sales pitch. Max 3 sentences."""
+    # Oslovení: "Dobrý den, pane Nováku," / "Dobrý den, paní Nováková,"
+    osloveni_raw = _gender_osloveni(dm_contact)
+    if not osloveni_raw or len(osloveni_raw) < 5:
+        return ""
+    # _gender_osloveni returns "Pane Nováku" / "Paní Nováková" → lowercase for mid-sentence
+    osloveni = "Dobrý den, " + osloveni_raw[0].lower() + osloveni_raw[1:]
+
+    gender = _detect_gender(dm_contact)
+    chtela = "chtěla" if gender == 'f' else "chtěl"
+
+    firma_short = _shorten_firma(firma)
+    prep = _prep_ve(firma_short)
+
+    role = _naturalize_role(pozice_title, "")
+
+    # Combo sentence
+    if combo:
+        combo_sent = ("Podobné role teď vídám častěji a vím, "
+                      "že {} bývá dost často oříšek.".format(combo))
+    else:
+        combo_sent = ("Podobné role teď vídám častěji a vím, "
+                      "že podobně postavené role bývají dost často oříšek.")
+
+    msg = (
+        "{osloveni}, náhodou jsem narazila na pozici {role}, "
+        "kterou u vás {prep} {firma} znovu aktualizovali. "
+        "{combo} "
+        "Kdybyste {chtela}, můžu Vám ukázat, co se v takové chvíli dá udělat, "
+        "aby se to s náborem zbytečně netáhlo."
+    ).format(
+        osloveni=osloveni,
+        role=role,
+        prep=prep,
+        firma=firma_short,
+        combo=combo_sent,
+        chtela=chtela,
+    )
+    return msg
+
+
+def _validate_aktualizovano(msg: str) -> bool:
+    """Validate message for aktualizované template."""
+    if not msg or not msg.startswith("Dobrý den"):
+        return False
+    if _BANNED_AKT_RE.search(msg):
+        return False
+    body = msg.strip()
+    sents = len(re.findall(r'[.?!]', body))
+    return sents <= 4
+
+
 # ── Main MISSILE generator ───────────────────────────────────────
 
 def generate_missile_dms(kraj: str = "", limit: int = 50,
@@ -2450,12 +2698,7 @@ def generate_missile_dms(kraj: str = "", limit: int = 50,
 
         msg_kraj = kraj or (m["kraje"][0] if m.get("kraje") else "ČR")
 
-        # ── Priority ──
-        pri, signal_text, extra = _missile_priority(m, ctx, kraj)
-        if pri == 0:
-            continue  # INSUFFICIENT_DATA — skip
-
-        # ── Contact validation ──
+        # ── Contact validation (shared) ──
         dm_contact = m["decision_makers"][0]
         last = dm_contact.get("last_name", "").strip()
         full = dm_contact.get("full_name", "").strip()
@@ -2466,41 +2709,20 @@ def generate_missile_dms(kraj: str = "", limit: int = 50,
             last, flags=re.IGNORECASE).strip().rstrip(',')
         if clean_last and not any(c.isupper() for c in clean_last):
             continue
-        osloveni = _gender_osloveni(dm_contact)
-        if not osloveni or len(osloveni) < 5:
-            continue
 
-        # ── Role naturalization + declension ──
-        ref_role_raw = extra.get("role", "")
-        if not ref_role_raw:
-            ref_role_raw = m["pozice"][0]["pozice"] if m.get("pozice") else ""
-        role_region = extra.get("region", msg_kraj)
-        role_nom = _naturalize_role(ref_role_raw, role_region)
-        role_acc = _decline_role_acc(role_nom)
-
-        # ── Message generation ──
-        msg = _missile_message(
-            pri, osloveni, role_nom, role_acc,
-            m["firma"], m["firma_norm"], role_region, extra,
-        )
-        if not msg or not _missile_validate(msg):
-            continue
-
-        color, bg = _PRIORITY_COLORS.get(pri, ("#64748b", "#f8fafc"))
-
-        # ── Position flags (aktualizovano, opakovane, problematicke) ──
+        # ── Position flags (shared) ──
         pozice_list = m.get("pozice", [])
-        cnt_aktualizovano = sum(
-            1 for p in pozice_list
+        akt_pozice = [
+            p for p in pozice_list
             if p.get("publikovano") and "ktualizov" in p["publikovano"]
-        )
+        ]
+        cnt_aktualizovano = len(akt_pozice)
         cnt_opakovane = sum(
             1 for p in pozice_list if p.get("predchozi_job_id")
         )
         cnt_problematicke = sum(
             1 for p in pozice_list if p.get("pocet_scanu", 0) >= 4
         )
-        # Compute days active from datum_prvni_scan
         _today = date.today()
         max_dni = 0
         for p in pozice_list:
@@ -2525,6 +2747,46 @@ def generate_missile_dms(kraj: str = "", limit: int = 50,
             flags.append({"typ": "problematicke", "barva": "#ea580c",
                           "bg": "#fff7ed", "text": f"Problém ({cnt_problematicke})"})
 
+        # ── Branch: aktualizované → conversational template, else P1-P5 ──
+        if akt_pozice:
+            # Pick best aktualizovaná position (highest pocet_scanu)
+            best_akt = max(akt_pozice, key=lambda p: p.get("pocet_scanu", 0))
+            combo = _extract_skill_combo(best_akt["pozice"])
+            msg = _missile_message_aktualizovano(
+                dm_contact, best_akt["pozice"], m["firma"], combo,
+            )
+            if not msg or not _validate_aktualizovano(msg):
+                continue
+            role_nom = _naturalize_role(best_akt["pozice"], "")
+            pri = 0  # special — sorts before P1
+            archetype = "AKT"
+            archetype_label = "Aktualizovaná pozice"
+            color, bg = "#dc2626", "#fef2f2"
+        else:
+            # ── P1-P5 priority system ──
+            pri, signal_text, extra = _missile_priority(m, ctx, kraj)
+            if pri == 0:
+                continue  # INSUFFICIENT_DATA — skip
+
+            osloveni = _gender_osloveni(dm_contact)
+            if not osloveni or len(osloveni) < 5:
+                continue
+            ref_role_raw = extra.get("role", "")
+            if not ref_role_raw:
+                ref_role_raw = m["pozice"][0]["pozice"] if m.get("pozice") else ""
+            role_region = extra.get("region", msg_kraj)
+            role_nom = _naturalize_role(ref_role_raw, role_region)
+            role_acc = _decline_role_acc(role_nom)
+            msg = _missile_message(
+                pri, osloveni, role_nom, role_acc,
+                m["firma"], m["firma_norm"], role_region, extra,
+            )
+            if not msg or not _missile_validate(msg):
+                continue
+            archetype = f"P{pri}"
+            archetype_label = _PRIORITY_LABELS.get(pri, "")
+            color, bg = _PRIORITY_COLORS.get(pri, ("#64748b", "#f8fafc"))
+
         dms.append({
             "firma": m["firma"],
             "firma_norm": m["firma_norm"],
@@ -2535,8 +2797,8 @@ def generate_missile_dms(kraj: str = "", limit: int = 50,
             "signal": m.get("signal", ""),
             "signal_score": m.get("signal_score", 0),
             "pocet_pozic": m["pocet_pozic"],
-            "archetype": f"P{pri}",
-            "archetype_label": _PRIORITY_LABELS.get(pri, ""),
+            "archetype": archetype,
+            "archetype_label": archetype_label,
             "archetype_color": color,
             "archetype_bg": bg,
             "priority": pri,
