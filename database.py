@@ -2693,13 +2693,111 @@ def _validate_aktualizovano(msg: str) -> bool:
     return sents <= 4
 
 
+# ── Vacancy detail fetcher (on-demand) ───────────────────────────
+
+_VACANCY_CACHE: dict[str, str] = {}  # url → description text (in-memory)
+
+
+def _fetch_vacancy_text(url: str) -> str:
+    """Fetch vacancy page from jobs.cz and extract requirements text.
+    Returns full description text or empty string on failure.
+    Result cached in memory for the session."""
+    if not url:
+        return ""
+    # Strip tracking params — just need the base /rpd/ URL
+    base_url = url.split("?")[0]
+    if base_url in _VACANCY_CACHE:
+        return _VACANCY_CACHE[base_url]
+    try:
+        import requests as _req
+        from bs4 import BeautifulSoup as _BS
+        sess = _req.Session()
+        sess.headers["User-Agent"] = (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+        resp = sess.get(base_url, timeout=10)
+        resp.raise_for_status()
+        soup = _BS(resp.text, "html.parser")
+        rich = soup.select_one("div[class*=RichContent]")
+        text = rich.get_text(" ", strip=True) if rich else ""
+        _VACANCY_CACHE[base_url] = text
+        return text
+    except Exception:
+        _VACANCY_CACHE[base_url] = ""
+        return ""
+
+
+def _extract_skill_combo_deep(title: str, description: str) -> str:
+    """Extract best 2-factor skill combo from full vacancy description.
+    Falls back to title-only extraction if description yields nothing."""
+    if not description:
+        return _extract_skill_combo(title)
+
+    # Combine title + description for keyword search
+    full_text = title + " " + description
+
+    # Expand slashes
+    expanded = re.sub(r"/", " ", full_text)
+
+    # Collect ALL matching skills across all categories
+    found = []  # (genitive_form, category, priority)
+    seen = set()  # (genitive_form) — dedup
+
+    for pattern, gen_form, cat in _SKILL_KW:
+        if gen_form in seen:
+            continue
+        if re.search(pattern, expanded, re.IGNORECASE):
+            found.append((gen_form, cat))
+            seen.add(gen_form)
+
+    if len(found) < 2:
+        return _extract_skill_combo(title)
+
+    # Pick the best pair: prefer cross-category combos
+    # Priority: tech+lang > tech+condition > domain+lang > skill+lang
+    # > skill+condition > level+skill > any cross-category
+    _CAT_RANK = {
+        ("tech", "lang"): 10, ("lang", "tech"): 10,
+        ("tech", "condition"): 9, ("condition", "tech"): 9,
+        ("tech", "domain"): 8, ("domain", "tech"): 8,
+        ("domain", "lang"): 8, ("lang", "domain"): 8,
+        ("skill", "lang"): 7, ("lang", "skill"): 7,
+        ("skill", "condition"): 6, ("condition", "skill"): 6,
+        ("level", "skill"): 5, ("skill", "level"): 5,
+        ("level", "tech"): 5, ("tech", "level"): 5,
+        ("level", "condition"): 4, ("condition", "level"): 4,
+        ("domain", "condition"): 4, ("condition", "domain"): 4,
+        ("domain", "skill"): 3, ("skill", "domain"): 3,
+    }
+
+    best_pair = None
+    best_score = -1
+    for i in range(len(found)):
+        for j in range(i + 1, len(found)):
+            g1, c1 = found[i]
+            g2, c2 = found[j]
+            if c1 == c2:
+                continue  # same category — skip
+            score = _CAT_RANK.get((c1, c2), 1)
+            if score > best_score:
+                best_score = score
+                best_pair = (g1, g2)
+
+    if best_pair:
+        return "kombinace {} a {}".format(best_pair[0], best_pair[1])
+
+    return _extract_skill_combo(title)
+
+
 # ── Single-position DM generator (for pozice page) ──────────────
 
 
 def generate_dm_for_position(firma: str, pozice_title: str = "",
-                              kraj: str = ""):
+                              kraj: str = "", url: str = ""):
     """Generate a DM for a specific company + position.
     Looks up decision maker, generates conversational message.
+    If url is provided, fetches the vacancy page for deeper skill extraction.
     Returns dict with kontakt info + message, or None if no DM found."""
     firma_norm = normalize_company(firma)
 
@@ -2734,8 +2832,21 @@ def generate_dm_for_position(firma: str, pozice_title: str = "",
     if len(full) < 5 or len(last) <= 2:
         return None
 
-    # Generate message using aktualizované template (conversational)
-    combo = _extract_skill_combo(pozice_title) if pozice_title else ""
+    # Look up the vacancy URL if not passed directly
+    if not url and pozice_title:
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT url FROM nabidky WHERE firma = ? AND pozice = ? "
+                "AND aktivni = 1 AND url != '' LIMIT 1",
+                (firma, pozice_title)
+            ).fetchone()
+            if row:
+                url = row["url"]
+
+    # Fetch vacancy text for deep combo extraction
+    vacancy_text = _fetch_vacancy_text(url) if url else ""
+    combo = _extract_skill_combo_deep(pozice_title, vacancy_text)
+
     msg = _missile_message_aktualizovano(dm_contact, pozice_title, firma, combo)
     if not msg or not _validate_aktualizovano(msg):
         return None
@@ -2750,6 +2861,7 @@ def generate_dm_for_position(firma: str, pozice_title: str = "",
         "kraj": kraj,
         "zprava": msg,
         "char_count": len(msg),
+        "combo_source": "vacancy" if (vacancy_text and combo) else "title",
     }
 
 

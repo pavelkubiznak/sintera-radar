@@ -529,9 +529,10 @@ def api_dm_for_position():
     firma = data.get("firma", "")
     pozice = data.get("pozice", "")
     kraj = data.get("kraj", "")
+    url = data.get("url", "")
     if not firma:
         return jsonify({"ok": False, "error": "Missing firma"})
-    result = generate_dm_for_position(firma, pozice, kraj)
+    result = generate_dm_for_position(firma, pozice, kraj, url=url)
     if result:
         return jsonify({"ok": True, "dm": result})
     return jsonify({"ok": False, "error": "Nenalezen decision maker pro tuto firmu."})

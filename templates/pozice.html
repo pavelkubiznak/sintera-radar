@@ -222,7 +222,7 @@
                 </a>
                 {% endif %}
                 {% if r.has_dm %}
-                <button class="btn-dm" onclick="toggleDM({{ loop.index }}, '{{ r.firma|e }}', '{{ r.pozice|e }}', '{{ r.kraj|e }}')">
+                <button class="btn-dm" onclick="toggleDM({{ loop.index }}, '{{ r.firma|e }}', '{{ r.pozice|e }}', '{{ r.kraj|e }}', '{{ r.url|e }}')">
                     <span class="dm-dot dm-dot-yes"></span>Zprava
                 </button>
                 {% else %}
@@ -264,7 +264,7 @@
 <script>
 var dmCache = {};
 
-function toggleDM(idx, firma, pozice, kraj) {
+function toggleDM(idx, firma, pozice, kraj, url) {
     var row = document.getElementById('dm-row-' + idx);
     if (row.style.display === 'table-row') {
         row.style.display = 'none';
@@ -276,12 +276,12 @@ function toggleDM(idx, firma, pozice, kraj) {
     if (dmCache[idx]) return;
 
     var container = document.getElementById('dm-content-' + idx);
-    container.innerHTML = '<span class="dm-loading">Nacitam decision makera...</span>';
+    container.innerHTML = '<span class="dm-loading">Nacitam decision makera a analyzu pozice...</span>';
 
     fetch('/api/dm-for-position', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({firma: firma, pozice: pozice, kraj: kraj})
+        body: JSON.stringify({firma: firma, pozice: pozice, kraj: kraj, url: url || ''})
     })
     .then(function(r) { return r.json(); })
     .then(function(data) {
