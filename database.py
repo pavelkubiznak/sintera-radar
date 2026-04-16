@@ -2100,19 +2100,6 @@ def _num_cz(n: int) -> str:
     return _CZ_NUMS.get(n, str(n))
 
 
-# ── Firma shortening ─────────────────────────────────────────────
-
-def _shorten_firma(firma: str) -> str:
-    """Strip legal suffixes for natural DM use."""
-    s = firma.strip()
-    s = re.sub(
-        r',?\s*(?:s\.r\.o\.|a\.s\.|a\.\s*s\.|SE|GmbH|AG|Ltd\.?|Inc\.?'
-        r'|spol\.\s*s\s*r\.?o\.?|v\.o\.s\.)\s*$',
-        '', s, flags=re.IGNORECASE,
-    )
-    return s.strip().rstrip(',').strip()
-
-
 # ── Pre-compute competitive context ──────────────────────────────
 
 def _missile_context() -> dict:
@@ -2638,10 +2625,65 @@ _BANNED_AKT_RE = re.compile(
 )
 
 
+_SIGNATURE = (
+    "\n\nKdyby Vám to stálo za krátkou reakci, budu ráda."
+    "\n\nŠárka Ogrocká"
+    "\n775 338 786 (jsem i na WhatsApp)"
+    "\nsarka.ogrocka@sintera.cz"
+)
+
+
+def _shorten_role(raw: str) -> str:
+    """Shorten role title to natural human form for the DM.
+
+    'Senior Process Engineer for Assembly Line' → 'procesní inženýr'
+    'Specialista kvality pro zákaznické projekty' → 'specialista kvality'
+    'PLC Programmer Senior | Automotive' → 'PLC programátor'
+    'Key Account Manager pro DACH region' → 'key account manager'
+    """
+    s = _naturalize_role(raw, "")
+
+    # Strip seniority prefixes (keep the core role)
+    s = re.sub(r'^(?:senior|junior|lead|hlavní|zkušený|experienced)\s+',
+               '', s, flags=re.IGNORECASE)
+
+    # Strip gender-inclusive markers: *kyně, *ka, /ka, /kyně
+    s = re.sub(r'[*/](?:kyně|ka|ky)\b', '', s)
+
+    # Strip trailing " | " segments first (so seniority at end becomes visible)
+    s = re.sub(r'\s*\|.*$', '', s)
+    # Strip "for ..." English qualifiers
+    s = re.sub(r'\s+for\s+.*$', '', s, flags=re.IGNORECASE)
+    # Strip "pro ..." qualifiers (always — keeps core role only)
+    s = re.sub(r'\s+pro(?:\s+.*)?$', '', s, flags=re.IGNORECASE)
+    # Strip Czech qualifier phrases
+    s = re.sub(r'\s+(?:se\s+zaměřením\s+na|s\s+(?:využitím|důrazem\s+na|orientací\s+na|praxí\s+v)|'
+               r'v\s+oboru|na\s+pozici|do\s+týmu|ve?\s+firmě)\s+.*$',
+               '', s, flags=re.IGNORECASE)
+
+    # Strip trailing seniority (now that pipes/qualifiers are gone)
+    s = re.sub(r'\s+(?:senior|junior|lead|ii|iii|I{1,3})\s*$',
+               '', s, flags=re.IGNORECASE)
+
+    # Strip " _ " joined segments if still long
+    if len(s) > 35:
+        s = re.sub(r'\s*_\s+.*$', '', s)
+
+    s = s.strip().rstrip('.,;:–—- ')
+
+    # Hard cap: if still > 50 chars, truncate at last space
+    if len(s) > 50:
+        cut = s[:50].rfind(' ')
+        if cut > 15:
+            s = s[:cut]
+
+    return s
+
+
 def _missile_message_aktualizovano(dm_contact: dict, pozice_title: str,
                                     firma: str, combo: str) -> str:
     """Generate conversational DM for aktualizované positions.
-    Light, human, no sales pitch. Max 3 sentences."""
+    Light, human, no sales pitch. 3 sentences + soft close + signature."""
     # Oslovení: "Dobrý den, pane Nováku," / "Dobrý den, paní Nováková,"
     osloveni_raw = _gender_osloveni(dm_contact)
     if not osloveni_raw or len(osloveni_raw) < 5:
@@ -2649,35 +2691,35 @@ def _missile_message_aktualizovano(dm_contact: dict, pozice_title: str,
     # _gender_osloveni returns "Pane Nováku" / "Paní Nováková" → lowercase for mid-sentence
     osloveni = "Dobrý den, " + osloveni_raw[0].lower() + osloveni_raw[1:]
 
-    gender = _detect_gender(dm_contact)
-    chtela = "chtěla" if gender == 'f' else "chtěl"
-
     firma_short = _shorten_firma(firma)
     prep = _prep_ve(firma_short)
 
-    role = _naturalize_role(pozice_title, "")
+    role = _shorten_role(pozice_title)
+    # Decline for "na pozici <genitiv/akkusativ>"
+    role_acc = _decline_role_acc(role)
 
     # Combo sentence
     if combo:
-        combo_sent = ("Podobné role teď vídám častěji a vím, "
+        combo_sent = ("Zrovna teď řeším stejný typ role jinde a vím, "
                       "že {} bývá dost často oříšek.".format(combo))
     else:
-        combo_sent = ("Podobné role teď vídám častěji a vím, "
+        combo_sent = ("Zrovna teď řeším stejný typ role jinde a vím, "
                       "že podobně postavené role bývají dost často oříšek.")
 
     msg = (
         "{osloveni}, náhodou jsem narazila na pozici {role}, "
         "kterou u vás {prep} {firma} znovu aktualizovali. "
         "{combo} "
-        "Kdybyste {chtela}, můžu Vám ukázat, co se v takové chvíli dá udělat, "
-        "aby se to s náborem zbytečně netáhlo."
+        "Kdyby Vám to stálo za to, můžu Vám ukázat, co se v takové chvíli "
+        "dá udělat, aby se to s náborem zbytečně netáhlo."
+        "{sig}"
     ).format(
         osloveni=osloveni,
-        role=role,
+        role=role_acc,
         prep=prep,
         firma=firma_short,
         combo=combo_sent,
-        chtela=chtela,
+        sig=_SIGNATURE,
     )
     return msg
 
@@ -2686,16 +2728,20 @@ def _validate_aktualizovano(msg: str) -> bool:
     """Validate message for aktualizované template."""
     if not msg or not msg.startswith("Dobrý den"):
         return False
-    if _BANNED_AKT_RE.search(msg):
+    if "Šárka" not in msg:
         return False
-    body = msg.strip()
+    # Check banned words only in body (before signature block)
+    body = msg.split("\n\n")[0]
+    if _BANNED_AKT_RE.search(body):
+        return False
+    # Count sentences in the body
     sents = len(re.findall(r'[.?!]', body))
     return sents <= 4
 
 
 # ── Vacancy detail fetcher (on-demand) ───────────────────────────
 
-_VACANCY_CACHE: dict[str, str] = {}  # url → description text (in-memory)
+_VACANCY_CACHE = {}  # url → description text (in-memory)
 
 
 def _fetch_vacancy_text(url: str) -> str:
