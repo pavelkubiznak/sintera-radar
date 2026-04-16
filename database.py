@@ -877,7 +877,7 @@ def radar_matches(min_scanu: int = 1, min_score: float = 0.82, skip_fuzzy: bool 
         # All active jobs, grouped by normalized company name
         jobs_by_company = {}
         job_rows = conn.execute("""
-            SELECT job_id, pozice, firma, kraj, obor, plat_text, url,
+            SELECT job_id, pozice, firma, kraj, misto, obor, plat_text, url,
                    pocet_scanu, datum_prvni_scan, datum_posledni_scan,
                    datum_vydani, aktivni, publikovano,
                    predchozi_job_id, predchozi_datum_prvni
@@ -2626,8 +2626,7 @@ _BANNED_AKT_RE = re.compile(
 
 
 _SIGNATURE = (
-    "\n\nKdyby Vám to stálo za krátkou reakci, budu ráda."
-    "\n\nŠárka Ogrocká"
+    "\n\n\nŠárka Ogrocká"
     "\n775 338 786 (jsem i na WhatsApp)"
     "\nsarka.ogrocka@sintera.cz"
 )
@@ -2680,10 +2679,149 @@ def _shorten_role(raw: str) -> str:
     return s
 
 
+def _clean_misto(misto: str) -> str:
+    """Extract usable city name from misto field.
+
+    'Brno – Slatina' → 'Brno'
+    'Mladá Boleslav' → 'Mladá Boleslav'
+    'Jihomoravský kraj + 1 další lokalita' → ''  (too generic)
+    'Česká republika' → ''  (too generic)
+    """
+    if not misto:
+        return ""
+    s = misto.strip()
+    # Filter out generic / useless values
+    skip = ("česká republika", "celá čr", "praha a okolí",
+            "další lokalita", "home office", "remote")
+    sl = s.lower()
+    if any(g in sl for g in skip):
+        return ""
+    # If it ends with "kraj" it's a region, not a city
+    if sl.endswith("kraj"):
+        return ""
+    # Strip district suffix: "Brno – Slatina" → "Brno"
+    s = re.sub(r'\s*[–—-]\s+.*$', '', s)
+    # Strip trailing parenthetical
+    s = re.sub(r'\s*\(.*\)$', '', s)
+    return s.strip()
+
+
+def _misto_locative(city: str) -> str:
+    """Simple city → locative ('v Brně', 'v Mladé Boleslavi', 'v Plzni').
+    For unknown cities, return 've městě <city>' as safe fallback.
+
+    Uses common Czech city locative forms."""
+    _KNOWN = {
+        "praha": "v Praze",
+        "brno": "v Brně",
+        "ostrava": "v Ostravě",
+        "plzeň": "v Plzni",
+        "liberec": "v Liberci",
+        "olomouc": "v Olomouci",
+        "hradec králové": "v Hradci Králové",
+        "české budějovice": "v Českých Budějovicích",
+        "ústí nad labem": "v Ústí nad Labem",
+        "pardubice": "v Pardubicích",
+        "zlín": "ve Zlíně",
+        "jihlava": "v Jihlavě",
+        "karlovy vary": "v Karlových Varech",
+        "kladno": "v Kladně",
+        "most": "v Mostě",
+        "opava": "v Opavě",
+        "frýdek-místek": "ve Frýdku-Místku",
+        "karviná": "v Karviné",
+        "teplice": "v Teplicích",
+        "děčín": "v Děčíně",
+        "chomutov": "v Chomutově",
+        "jičín": "v Jičíně",
+        "prostějov": "v Prostějově",
+        "přerov": "v Přerově",
+        "třebíč": "v Třebíči",
+        "třinec": "v Třinci",
+        "znojmo": "ve Znojmě",
+        "kolín": "v Kolíně",
+        "mladá boleslav": "v Mladé Boleslavi",
+        "tábor": "v Táboře",
+        "příbram": "v Příbrami",
+        "cheb": "v Chebu",
+        "sokolov": "v Sokolově",
+        "kroměříž": "v Kroměříži",
+        "klatovy": "v Klatovech",
+        "havířov": "v Havířově",
+        "hodonín": "v Hodoníně",
+        "nový jičín": "v Novém Jičíně",
+        "valašské meziříčí": "ve Valašském Meziříčí",
+        "šumperk": "v Šumperku",
+        "žďár nad sázavou": "ve Žďáru nad Sázavou",
+        "trutnov": "v Trutnově",
+        "náchod": "v Náchodě",
+        "beroun": "v Berouně",
+        "benešov": "v Benešově",
+        "kutná hora": "v Kutné Hoře",
+        "pelhřimov": "v Pelhřimově",
+        "svitavy": "ve Svitavách",
+        "blansko": "v Blansku",
+        "vyškov": "ve Vyškově",
+        "břeclav": "v Břeclavi",
+        "uherské hradiště": "v Uherském Hradišti",
+        "vsetín": "ve Vsetíně",
+        "boskovice": "v Boskovicích",
+        "ivančice": "v Ivančicích",
+        "humpolec": "v Humpolci",
+        "brandýs nad labem": "v Brandýse nad Labem",
+        "lysá nad labem": "v Lysé nad Labem",
+        "říčany": "v Říčanech",
+        "mělník": "v Mělníku",
+        "nymburk": "v Nymburku",
+        "rakovník": "v Rakovníku",
+        "kralupy nad vltavou": "v Kralupech nad Vltavou",
+        "slaný": "ve Slaném",
+        "neratovice": "v Neratovicích",
+        "aš": "v Aši",
+        "litoměřice": "v Litoměřicích",
+        "louny": "v Lounech",
+        "roudnice nad labem": "v Roudnici nad Labem",
+        "žatec": "v Žatci",
+        "česká lípa": "v České Lípě",
+        "jablonec nad nisou": "v Jablonci nad Nisou",
+        "turnov": "v Turnově",
+        "semily": "v Semilech",
+        "chrudim": "v Chrudimi",
+        "ústí nad orlicí": "v Ústí nad Orlicí",
+        "havlíčkův brod": "v Havlíčkově Brodě",
+        "rychnov nad kněžnou": "v Rychnově nad Kněžnou",
+        "lanškroun": "v Lanškrouně",
+        "litomyšl": "v Litomyšli",
+        "vysoké mýto": "ve Vysokém Mýtě",
+        "strakonice": "ve Strakonicích",
+        "písek": "v Písku",
+        "prachatice": "v Prachaticích",
+        "domažlice": "v Domažlicích",
+        "rokycany": "v Rokycanech",
+        "tachov": "v Tachově",
+        "valtice": "ve Valticích",
+        "mikulov": "v Mikulově",
+        "kyjov": "v Kyjově",
+        "bučovice": "v Bučovicích",
+        "rosice": "v Rosicích",
+        "kuřim": "v Kuřimi",
+        "tišnov": "v Tišnově",
+        "moravský krumlov": "v Moravském Krumlově",
+        "veselí nad moravou": "ve Veselí nad Moravou",
+    }
+    cl = city.strip().lower()
+    if cl in _KNOWN:
+        return _KNOWN[cl]
+    # Fallback: "v <city>" — not grammatically perfect but usable
+    prep = _prep_ve(city)
+    return "{} {}".format(prep, city)
+
+
 def _missile_message_aktualizovano(dm_contact: dict, pozice_title: str,
-                                    firma: str, combo: str) -> str:
+                                    firma: str, combo: str,
+                                    misto: str = "") -> str:
     """Generate conversational DM for aktualizované positions.
-    Light, human, no sales pitch. 3 sentences + soft close + signature."""
+    Light, human, no sales pitch. 3 sentences + signature."""
     # Oslovení: "Dobrý den, pane Nováku," / "Dobrý den, paní Nováková,"
     osloveni_raw = _gender_osloveni(dm_contact)
     if not osloveni_raw or len(osloveni_raw) < 5:
@@ -2698,10 +2836,20 @@ def _missile_message_aktualizovano(dm_contact: dict, pozice_title: str,
     # Decline for "na pozici <genitiv/akkusativ>"
     role_acc = _decline_role_acc(role)
 
-    # Combo sentence
-    if combo:
+    # Location: prefer city, fall back to nothing
+    city = _clean_misto(misto)
+    loc_phrase = _misto_locative(city) if city else ""
+
+    # Combo sentence — with optional location
+    if combo and loc_phrase:
+        combo_sent = ("Zrovna teď řeším stejný typ role jinde a vím, "
+                      "že {} {} bývá dost často oříšek.".format(combo, loc_phrase))
+    elif combo:
         combo_sent = ("Zrovna teď řeším stejný typ role jinde a vím, "
                       "že {} bývá dost často oříšek.".format(combo))
+    elif loc_phrase:
+        combo_sent = ("Zrovna teď řeším stejný typ role jinde a vím, "
+                      "že obsadit podobnou pozici {} bývá dost často oříšek.".format(loc_phrase))
     else:
         combo_sent = ("Zrovna teď řeším stejný typ role jinde a vím, "
                       "že podobně postavené role bývají dost často oříšek.")
@@ -2878,22 +3026,25 @@ def generate_dm_for_position(firma: str, pozice_title: str = "",
     if len(full) < 5 or len(last) <= 2:
         return None
 
-    # Look up the vacancy URL if not passed directly
-    if not url and pozice_title:
+    # Look up the vacancy URL and misto (city) if not passed directly
+    misto = ""
+    if pozice_title:
         with get_conn() as conn:
             row = conn.execute(
-                "SELECT url FROM nabidky WHERE firma = ? AND pozice = ? "
-                "AND aktivni = 1 AND url != '' LIMIT 1",
+                "SELECT url, misto FROM nabidky WHERE firma = ? AND pozice = ? "
+                "AND aktivni = 1 LIMIT 1",
                 (firma, pozice_title)
             ).fetchone()
             if row:
-                url = row["url"]
+                if not url and row["url"]:
+                    url = row["url"]
+                misto = row["misto"] or ""
 
     # Fetch vacancy text for deep combo extraction
     vacancy_text = _fetch_vacancy_text(url) if url else ""
     combo = _extract_skill_combo_deep(pozice_title, vacancy_text)
 
-    msg = _missile_message_aktualizovano(dm_contact, pozice_title, firma, combo)
+    msg = _missile_message_aktualizovano(dm_contact, pozice_title, firma, combo, misto)
     if not msg or not _validate_aktualizovano(msg):
         return None
 
@@ -2996,8 +3147,9 @@ def generate_missile_dms(kraj: str = "", limit: int = 50,
             # Pick best aktualizovaná position (highest pocet_scanu)
             best_akt = max(akt_pozice, key=lambda p: p.get("pocet_scanu", 0))
             combo = _extract_skill_combo(best_akt["pozice"])
+            best_misto = best_akt.get("misto", "")
             msg = _missile_message_aktualizovano(
-                dm_contact, best_akt["pozice"], m["firma"], combo,
+                dm_contact, best_akt["pozice"], m["firma"], combo, best_misto,
             )
             if not msg or not _validate_aktualizovano(msg):
                 continue
