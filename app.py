@@ -524,9 +524,12 @@ def batch_page():
 def missile_page():
     kraj = request.args.get("kraj", "")
     limit = int(request.args.get("limit", 50))
-    dms = generate_missile_dms(kraj=kraj, limit=limit)
+    flag = request.args.get("flag", "")
+    sort = request.args.get("sort", "")
+    dms = generate_missile_dms(kraj=kraj, limit=limit, flag=flag, sort=sort)
     return render_template("missile.html",
-                           dms=dms, kraj=kraj, limit=limit, kraje=KRAJE)
+                           dms=dms, kraj=kraj, limit=limit, flag=flag,
+                           sort=sort, kraje=KRAJE)
 
 
 # ── Salary Benchmark ───────────────────────────────────────────────────────

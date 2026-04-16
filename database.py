@@ -2421,7 +2421,8 @@ _PRIORITY_COLORS = {
 
 # ── Main MISSILE generator ───────────────────────────────────────
 
-def generate_missile_dms(kraj: str = "", limit: int = 50) -> list:
+def generate_missile_dms(kraj: str = "", limit: int = 50,
+                         flag: str = "", sort: str = "") -> list:
     """MISSILE v4 cold DM generator.
 
     FACT → INTERPRETATION → MICRO-STEP.
@@ -2429,6 +2430,10 @@ def generate_missile_dms(kraj: str = "", limit: int = 50) -> list:
     3 (hiring wave) → 4 (missing salary) → 5 (long-running).
     If no priority fires → INSUFFICIENT_DATA → skip.
     Naturalized role names, Czech declension, banned-word validation.
+
+    flag: '' (all), 'aktualizovano', 'opakovane', 'problematicke'
+          Filters to only companies with that flag.
+    sort: '' (smart default), 'flags' (flagged first), 'priority', 'dni'
     """
     result = radar_matches(skip_fuzzy=True)
     matches = result.get("matches", [])
@@ -2542,9 +2547,32 @@ def generate_missile_dms(kraj: str = "", limit: int = 50) -> list:
             "max_dni": max_dni,
         })
 
-    dms.sort(key=lambda d: (d["priority"], d["signal_score"]), reverse=False)
-    # Priority 1 is strongest → sort ascending so P1 comes first
-    dms.sort(key=lambda d: (d["priority"], -d["signal_score"]))
+    # ── Flag filter ──
+    if flag:
+        dms = [d for d in dms if any(f["typ"] == flag for f in d["flags"])]
+
+    # ── Sorting ──
+    def _flag_weight(d):
+        """Higher = more actionable. aktualizovano=30, opakovane=20, problematicke=10."""
+        w = 0
+        for f in d["flags"]:
+            if f["typ"] == "aktualizovano":
+                w += 30
+            elif f["typ"] == "opakovane":
+                w += 20
+            elif f["typ"] == "problematicke":
+                w += 10
+        return w
+
+    if sort == "dni":
+        dms.sort(key=lambda d: (-d["max_dni"], d["priority"]))
+    elif sort == "priority":
+        dms.sort(key=lambda d: (d["priority"], -d["signal_score"]))
+    else:
+        # Smart default: flagged companies first (aktualizovano > opakovane > problematicke),
+        # then by priority within each tier
+        dms.sort(key=lambda d: (-_flag_weight(d), d["priority"], -d["signal_score"]))
+
     return dms[:limit]
 
 

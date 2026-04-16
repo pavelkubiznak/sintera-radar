@@ -47,6 +47,23 @@
     .flag-badge { display: inline-block; padding: 2px 8px; border-radius: 10px;
                   font-size: 0.75em; font-weight: 600; margin-right: 4px; }
     .dm-flags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+
+    .filter-pills { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
+    .filter-pill { padding: 5px 14px; border-radius: 20px; font-size: 0.82em;
+                   font-weight: 600; text-decoration: none; border: 2px solid #e2e2e2;
+                   color: #666; background: #fff; transition: all 0.15s; }
+    .filter-pill:hover { border-color: #aaa; color: #333; }
+    .filter-pill.active { color: #fff; border-color: transparent; }
+    .filter-pill.active-all { background: #6366f1; border-color: #6366f1; color: #fff; }
+    .filter-pill.active-red { background: #dc2626; border-color: #dc2626; color: #fff; }
+    .filter-pill.active-purple { background: #7c3aed; border-color: #7c3aed; color: #fff; }
+    .filter-pill.active-orange { background: #ea580c; border-color: #ea580c; color: #fff; }
+
+    .sort-pills { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .sort-pill { padding: 3px 10px; border-radius: 14px; font-size: 0.78em;
+                 font-weight: 500; text-decoration: none; color: #888; background: #f3f4f6; }
+    .sort-pill:hover { color: #333; background: #e5e7eb; }
+    .sort-pill.active { color: #fff; background: #6366f1; }
 </style>
 {% endblock %}
 
@@ -78,10 +95,30 @@
     </div>
 </div>
 
+<!-- Flag filter pills -->
+<div class="filter-pills">
+    <a href="/missile?kraj={{ kraj }}&limit={{ limit }}&sort={{ sort }}"
+       class="filter-pill {% if not flag %}active active-all{% endif %}">
+        Vsechny
+    </a>
+    <a href="/missile?kraj={{ kraj }}&limit={{ limit }}&flag=aktualizovano&sort={{ sort }}"
+       class="filter-pill {% if flag == 'aktualizovano' %}active active-red{% endif %}">
+        &#128260; Aktualizovane
+    </a>
+    <a href="/missile?kraj={{ kraj }}&limit={{ limit }}&flag=opakovane&sort={{ sort }}"
+       class="filter-pill {% if flag == 'opakovane' %}active active-purple{% endif %}">
+        &#128257; Opakovane
+    </a>
+    <a href="/missile?kraj={{ kraj }}&limit={{ limit }}&flag=problematicke&sort={{ sort }}"
+       class="filter-pill {% if flag == 'problematicke' %}active active-orange{% endif %}">
+        &#9888; Problem (4+ scanu)
+    </a>
+</div>
+
 <!-- Filters -->
 <div class="controls">
     <label>Region:</label>
-    <select onchange="location.href='/missile?kraj='+encodeURIComponent(this.value)+'&limit={{ limit }}'">
+    <select onchange="location.href='/missile?kraj='+encodeURIComponent(this.value)+'&limit={{ limit }}&flag={{ flag }}&sort={{ sort }}'">
         <option value="">Vsechny kraje</option>
         {% for kod, (nazev, slug) in kraje.items() %}
         <option value="{{ nazev }}" {% if kraj == nazev %}selected{% endif %}>{{ nazev }}</option>
@@ -89,14 +126,24 @@
     </select>
 
     <label>Limit:</label>
-    <select onchange="location.href='/missile?kraj='+encodeURIComponent('{{ kraj }}')+'&limit='+this.value">
+    <select onchange="location.href='/missile?kraj='+encodeURIComponent('{{ kraj }}')+'&limit='+this.value+'&flag={{ flag }}&sort={{ sort }}'">
         {% for n in [10, 25, 50, 100] %}
         <option value="{{ n }}" {% if limit == n %}selected{% endif %}>{{ n }}</option>
         {% endfor %}
     </select>
 
+    <div class="sort-pills">
+        <span style="font-size:0.78em; color:#888;">Radit:</span>
+        <a href="/missile?kraj={{ kraj }}&limit={{ limit }}&flag={{ flag }}"
+           class="sort-pill {% if not sort %}active{% endif %}">Dle signalu</a>
+        <a href="/missile?kraj={{ kraj }}&limit={{ limit }}&flag={{ flag }}&sort=priority"
+           class="sort-pill {% if sort == 'priority' %}active{% endif %}">Dle priority</a>
+        <a href="/missile?kraj={{ kraj }}&limit={{ limit }}&flag={{ flag }}&sort=dni"
+           class="sort-pill {% if sort == 'dni' %}active{% endif %}">Dle stari</a>
+    </div>
+
     <span class="text-muted">
-        {{ dms|length }} zprav pripraveno
+        {{ dms|length }} zprav{% if flag %} (filtr: {{ flag }}){% endif %}
     </span>
 </div>
 
