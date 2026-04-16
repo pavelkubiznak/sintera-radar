@@ -2667,6 +2667,66 @@ def _validate_aktualizovano(msg: str) -> bool:
     return sents <= 4
 
 
+# ── Single-position DM generator (for pozice page) ──────────────
+
+
+def generate_dm_for_position(firma: str, pozice_title: str = "",
+                              kraj: str = ""):
+    """Generate a DM for a specific company + position.
+    Looks up decision maker, generates conversational message.
+    Returns dict with kontakt info + message, or None if no DM found."""
+    firma_norm = normalize_company(firma)
+
+    # Find decision maker for this company
+    with get_conn() as conn:
+        dm_rows = conn.execute(
+            "SELECT * FROM decision_makers WHERE company_normalized = ?",
+            (firma_norm,)
+        ).fetchall()
+
+    # Try substring match if exact match fails
+    if not dm_rows:
+        with get_conn() as conn:
+            all_dms = conn.execute(
+                "SELECT * FROM decision_makers WHERE current_company != ''"
+            ).fetchall()
+        for dm in all_dms:
+            dn = dm["company_normalized"]
+            if len(dn) >= 4 and len(firma_norm) >= 4:
+                if firma_norm in dn or dn in firma_norm:
+                    dm_rows = [dm]
+                    break
+
+    if not dm_rows:
+        return None
+
+    dm_contact = dict(dm_rows[0])
+
+    # Validate contact
+    last = dm_contact.get("last_name", "").strip()
+    full = dm_contact.get("full_name", "").strip()
+    if len(full) < 5 or len(last) <= 2:
+        return None
+
+    # Generate message using aktualizované template (conversational)
+    combo = _extract_skill_combo(pozice_title) if pozice_title else ""
+    msg = _missile_message_aktualizovano(dm_contact, pozice_title, firma, combo)
+    if not msg or not _validate_aktualizovano(msg):
+        return None
+
+    return {
+        "kontakt": dm_contact.get("full_name", ""),
+        "kontakt_title": dm_contact.get("current_title", ""),
+        "linkedin_url": dm_contact.get("profile_url", ""),
+        "firma": firma,
+        "firma_norm": firma_norm,
+        "pozice": pozice_title,
+        "kraj": kraj,
+        "zprava": msg,
+        "char_count": len(msg),
+    }
+
+
 # ── Main MISSILE generator ───────────────────────────────────────
 
 def generate_missile_dms(kraj: str = "", limit: int = 50,

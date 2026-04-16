@@ -21,7 +21,8 @@ from database import (init_db, uloz_nabidky, nacti_nabidky, statistiky, exportuj
                        radar_doporuceni, detect_surge, generate_batch_messages,
                        normalize_company, firma_detail, dashboard_stats,
                        filtr_pozice, firmy_prehled,
-                       generate_missile_dms, salary_benchmark, analytics_export_data)
+                       generate_missile_dms, salary_benchmark, analytics_export_data,
+                       generate_dm_for_position)
 
 app = Flask(__name__)
 init_db()
@@ -516,6 +517,24 @@ def batch_page():
     messages = generate_batch_messages(recommendations)
     return render_template("batch.html",
                            messages=messages, per_region=per_region, kraje=KRAJE)
+
+
+# ── DM generation API (for pozice page inline panel) ──────────────────────
+
+@app.route("/api/dm-for-position", methods=["POST"])
+def api_dm_for_position():
+    """Generate DM for a specific position + firma.
+    Returns {ok, dm: {kontakt, kontakt_title, linkedin_url, zprava, char_count}} or {ok:false, error}."""
+    data = request.get_json()
+    firma = data.get("firma", "")
+    pozice = data.get("pozice", "")
+    kraj = data.get("kraj", "")
+    if not firma:
+        return jsonify({"ok": False, "error": "Missing firma"})
+    result = generate_dm_for_position(firma, pozice, kraj)
+    if result:
+        return jsonify({"ok": True, "dm": result})
+    return jsonify({"ok": False, "error": "Nenalezen decision maker pro tuto firmu."})
 
 
 # ── MISSILE DM Generator ───────────────────────────────────────────────────

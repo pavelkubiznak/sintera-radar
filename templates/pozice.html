@@ -2,6 +2,34 @@
 {% set active_page = 'pozice' %}
 {% block title %}{{ titulek }} — Sintera Radar{% endblock %}
 
+{% block extra_css %}
+<style>
+    .dm-panel { background: #f8f7ff; border-top: 2px solid #6366f1; padding: 16px 20px;
+                display: none; }
+    .dm-panel.open { display: table-row; }
+    .dm-panel-inner { display: flex; gap: 16px; align-items: start; flex-wrap: wrap; }
+    .dm-panel-contact { min-width: 180px; }
+    .dm-panel-contact .name { font-weight: 700; font-size: 0.95em; }
+    .dm-panel-contact .title { font-size: 0.82em; color: #888; }
+    .dm-panel-contact .linkedin { font-size: 0.82em; margin-top: 4px; }
+    .dm-panel-contact .linkedin a { color: #6366f1; }
+    .dm-panel-msg { flex: 1; min-width: 280px; }
+    .dm-panel-msg textarea { width: 100%; border: 1px solid #d1d5db; border-radius: 8px;
+                              padding: 10px 12px; font-size: 0.88em; line-height: 1.55;
+                              font-family: inherit; resize: vertical; min-height: 100px;
+                              color: #1e1b4b; background: #fff; }
+    .dm-panel-msg textarea:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99,102,241,0.15); }
+    .dm-panel-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+    .dm-panel-chars { font-size: 0.75em; color: #888; margin-left: auto; }
+    .copy-ok-inline { color: #16a34a; font-weight: 600; font-size: 0.82em; display: none; }
+    .dm-no-match { color: #ea580c; font-size: 0.85em; padding: 8px 0; }
+    .dm-loading { color: #6366f1; font-size: 0.85em; padding: 8px 0; }
+    .btn-dm { background: #6366f1; color: #fff; border: none; padding: 3px 10px;
+              border-radius: 5px; font-size: 0.75em; cursor: pointer; font-weight: 600; }
+    .btn-dm:hover { background: #4f46e5; }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="main-header">
     <h1>{{ titulek }}</h1>
@@ -181,12 +209,25 @@
                 {% endif %}
             </td>
             <td style="font-size:0.85em;">{{ r.plat_text or '—' }}</td>
-            <td>
+            <td style="white-space:nowrap;">
                 {% if r.url %}
                 <a href="{{ r.url }}" target="_blank" class="btn btn-outline btn-sm" style="font-size:11px;">
                     jobs.cz
                 </a>
                 {% endif %}
+                <button class="btn-dm" onclick="toggleDM({{ loop.index }}, '{{ r.firma|e }}', '{{ r.pozice|e }}', '{{ r.kraj|e }}')">
+                    Zprava
+                </button>
+            </td>
+        </tr>
+        <!-- DM panel row (hidden, expands on click) -->
+        <tr class="dm-panel" id="dm-row-{{ loop.index }}">
+            <td colspan="10" style="padding:0;">
+                <div style="padding:16px 20px; background:#f8f7ff; border-top:2px solid #6366f1;">
+                    <div id="dm-content-{{ loop.index }}">
+                        <span class="dm-loading">Nacitam decision makera...</span>
+                    </div>
+                </div>
             </td>
         </tr>
         {% endfor %}
@@ -205,4 +246,94 @@
     <a href="/" class="btn btn-outline btn-sm">Zpet na dashboard</a>
     <a href="/firmy" class="btn btn-outline btn-sm">Prehled firem</a>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var dmCache = {};
+
+function toggleDM(idx, firma, pozice, kraj) {
+    var row = document.getElementById('dm-row-' + idx);
+    if (row.style.display === 'table-row') {
+        row.style.display = 'none';
+        return;
+    }
+    row.style.display = 'table-row';
+
+    // Already loaded?
+    if (dmCache[idx]) return;
+
+    var container = document.getElementById('dm-content-' + idx);
+    container.innerHTML = '<span class="dm-loading">Nacitam decision makera...</span>';
+
+    fetch('/api/dm-for-position', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({firma: firma, pozice: pozice, kraj: kraj})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (!data.ok) {
+            container.innerHTML = '<div class="dm-no-match">' +
+                '<strong>Decision maker nenalezen.</strong> ' +
+                '<a href="/decision-makers" style="color:#6366f1;">Nahrat kontakty</a> nebo ' +
+                '<a href="/firma/' + encodeURIComponent(data.dm && data.dm.firma_norm || firma.toLowerCase()) + '" style="color:#6366f1;">detail firmy</a>' +
+                '</div>';
+            return;
+        }
+        dmCache[idx] = data.dm;
+        var d = data.dm;
+        var html = '<div class="dm-panel-inner">' +
+            '<div class="dm-panel-contact">' +
+                '<div class="name">' + d.kontakt + '</div>' +
+                (d.kontakt_title ? '<div class="title">' + d.kontakt_title + '</div>' : '') +
+                (d.linkedin_url ? '<div class="linkedin"><a href="' + d.linkedin_url + '" target="_blank">Otevrit LinkedIn &rarr;</a></div>' : '') +
+            '</div>' +
+            '<div class="dm-panel-msg">' +
+                '<textarea id="dm-text-' + idx + '" rows="5">' + d.zprava + '</textarea>' +
+                '<div class="dm-panel-actions">' +
+                    '<button class="btn btn-primary btn-sm" onclick="copyDM(' + idx + ')">Zkopirovat</button>' +
+                    (d.linkedin_url ? '<a href="' + d.linkedin_url + '" target="_blank" class="btn btn-outline btn-sm">LinkedIn</a>' : '') +
+                    '<button class="btn btn-green btn-sm" onclick="markSent(' + idx + ')">Odeslano</button>' +
+                    '<span class="copy-ok-inline" id="copy-ok-' + idx + '">Zkopirovano!</span>' +
+                    '<span class="dm-panel-chars">' + d.char_count + ' znaku</span>' +
+                '</div>' +
+            '</div>' +
+        '</div>';
+        container.innerHTML = html;
+    })
+    .catch(function(err) {
+        container.innerHTML = '<div class="dm-no-match">Chyba: ' + err.message + '</div>';
+    });
+}
+
+function copyDM(idx) {
+    var ta = document.getElementById('dm-text-' + idx);
+    navigator.clipboard.writeText(ta.value).then(function() {
+        var ok = document.getElementById('copy-ok-' + idx);
+        ok.style.display = 'inline';
+        setTimeout(function() { ok.style.display = 'none'; }, 2000);
+    });
+}
+
+function markSent(idx) {
+    var d = dmCache[idx];
+    if (!d) return;
+    if (!confirm('Oznacit zpravu pro ' + d.firma + ' jako odeslanou?')) return;
+    fetch('/api/mark-contacted', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            firma: d.firma, firma_norm: d.firma_norm,
+            kontakt: d.kontakt, kontakt_url: d.linkedin_url,
+            kanal: 'LinkedIn DM', kraj: d.kraj
+        })
+    }).then(function(r) { return r.json(); }).then(function(data) {
+        if (data.ok) {
+            var row = document.getElementById('dm-row-' + idx);
+            row.innerHTML = '<td colspan="10" style="padding:12px 20px; background:#dcfce7; color:#16a34a; font-weight:600;">Oznaceno jako odeslano — ' + d.firma + '</td>';
+        }
+    });
+}
+</script>
 {% endblock %}
