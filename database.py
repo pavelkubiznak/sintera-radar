@@ -2483,6 +2483,43 @@ def generate_missile_dms(kraj: str = "", limit: int = 50) -> list:
 
         color, bg = _PRIORITY_COLORS.get(pri, ("#64748b", "#f8fafc"))
 
+        # ── Position flags (aktualizovano, opakovane, problematicke) ──
+        pozice_list = m.get("pozice", [])
+        cnt_aktualizovano = sum(
+            1 for p in pozice_list
+            if p.get("publikovano") and "ktualizov" in p["publikovano"]
+        )
+        cnt_opakovane = sum(
+            1 for p in pozice_list if p.get("predchozi_job_id")
+        )
+        cnt_problematicke = sum(
+            1 for p in pozice_list if p.get("pocet_scanu", 0) >= 4
+        )
+        # Compute days active from datum_prvni_scan
+        _today = date.today()
+        max_dni = 0
+        for p in pozice_list:
+            dps = p.get("datum_prvni_scan", "")
+            if dps:
+                try:
+                    d0 = date.fromisoformat(dps[:10])
+                    days = (_today - d0).days
+                    if days > max_dni:
+                        max_dni = days
+                except (ValueError, TypeError):
+                    pass
+
+        flags = []
+        if cnt_aktualizovano:
+            flags.append({"typ": "aktualizovano", "barva": "#dc2626",
+                          "bg": "#fef2f2", "text": f"Aktualizováno ({cnt_aktualizovano})"})
+        if cnt_opakovane:
+            flags.append({"typ": "opakovane", "barva": "#7c3aed",
+                          "bg": "#faf5ff", "text": f"Opakované ({cnt_opakovane})"})
+        if cnt_problematicke:
+            flags.append({"typ": "problematicke", "barva": "#ea580c",
+                          "bg": "#fff7ed", "text": f"Problém ({cnt_problematicke})"})
+
         dms.append({
             "firma": m["firma"],
             "firma_norm": m["firma_norm"],
@@ -2501,6 +2538,8 @@ def generate_missile_dms(kraj: str = "", limit: int = 50) -> list:
             "pozice_ref": role_nom,
             "zprava": msg,
             "char_count": len(msg),
+            "flags": flags,
+            "max_dni": max_dni,
         })
 
     dms.sort(key=lambda d: (d["priority"], d["signal_score"]), reverse=False)
