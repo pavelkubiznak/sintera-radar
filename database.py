@@ -1706,150 +1706,275 @@ def generate_batch_messages(recommendations: list, template: str = "") -> list:
 
 
 # ── MISSILE: Cold LinkedIn DM Generator ──────────────────────────────────────
+#
+# Pravidla:
+#   1. Fakt o příjemci — konkrétní, měřitelný, dokazuje že nepíšeme naslepo
+#   2. Diagnóza — co ten fakt znamená pro jeho situaci. Ne soucit, ne nabídka
+#   3. CTA — "Pošlete číslo." Jeden krok, telefon, ne pokračování chatu
+#
+# Tři věty. Bez zdvořilostí. Bez představování. Bez nabídek.
+# Podpis jen "Šárka" — žádný název firmy.
+# Max 300 znaků (LinkedIn connection request limit).
+# Zakázaná slova: nabídka, klient, recruitment, agentura, headhunter, outsourcing
+#
+# Cíl: příjemce si řekne "jak to ví?" — a odpoví.
 
-# Archetype priority order (highest first)
 _MISSILE_PRIORITY = {"A2": 6, "A3": 5, "A1": 4, "D": 3, "E": 2, "F": 1}
-
-# Czech female first-name endings (heuristic for Pane/Paní)
-_FEMALE_ENDINGS = ("ová", "á", "ová,")
 
 
 def _gender_osloveni(dm: dict) -> str:
-    """Returns 'Paní Nováková' or 'Pane Novák' based on Czech gender heuristics."""
+    """'paní Nováková' / 'pane Novák'. Handles accented + unaccented Czech."""
     last = dm.get("last_name", "").strip()
     first = dm.get("first_name", "").strip()
-    full = dm.get("full_name", "").strip()
-    if last:
-        if any(last.endswith(e) for e in _FEMALE_ENDINGS):
-            return "paní {}".format(last)
-        return "pane {}".format(last)
-    return full or "dobrý den"
+    if not last or len(last) <= 1:
+        full = dm.get("full_name", "").strip()
+        parts = full.split()
+        if len(parts) >= 2:
+            last = parts[-1]
+        elif full:
+            return full
+        else:
+            return ""
+    # Strip trailing titles: ", MBA", ", DiS.", " PhD" etc.
+    clean = re.sub(r'[,\s]+(MBA|PhD|CSc|Ing|Mgr|Bc|DiS|Dr|Ph\.?D\.?)\s*\.?\s*$',
+                   '', last, flags=re.IGNORECASE).strip()
+    clean = clean.rstrip(',').strip()
+    if not clean or len(clean) <= 1:
+        return dm.get("full_name", "").strip()
+    # Normalize case: if all-lower or all-upper, title-case it
+    if clean.islower() or clean.isupper():
+        clean = clean.title()
+    low = clean.lower()
+    # Czech female surname patterns (accented + unaccented):
+    #   -ová/-ova (Nováková, Bukovova)
+    #   -ská/-ska (Bukovská/Bukovska, Černohorská/Cernohorska)
+    #   -cká/-cka (Kopecká)
+    #   -á (Krátká, Dlouhá) — only accented, bare -a is too ambiguous
+    if (low.endswith("ová") or low.endswith("ova")
+            or low.endswith("ská") or low.endswith("ska")
+            or low.endswith("cká") or low.endswith("cka")
+            or (low.endswith("á") and len(clean) > 2)):
+        return "paní {}".format(clean)
+    # Fallback: Czech female first names almost always end in -a or -e/-ie
+    # Male names end in consonant, -o, -ek, -ík, -oslav, etc.
+    if first:
+        fl = first.lower().rstrip('.')
+        if fl.endswith("a") or fl.endswith("ie") or fl.endswith("na"):
+            return "paní {}".format(clean)
+    return "pane {}".format(clean)
+
+
+def _compute_dni(p: dict) -> int:
+    """Days active for a position."""
+    dni = p.get("dni_aktivni")
+    if dni is not None:
+        return int(dni)
+    try:
+        d1 = datetime.fromisoformat(p["datum_prvni_scan"][:10])
+        return (datetime.now() - d1).days
+    except Exception:
+        return 0
 
 
 def _missile_archetype(firma_data: dict) -> tuple:
-    """Determine the best MISSILE archetype for a company.
-    Returns (archetype_code, reference_position, extra_data).
+    """Best MISSILE archetype for a company.
+    Returns (code, reference_position, extra_data).
+    extra_data always includes computed metrics for the message generator.
     """
     pozice = firma_data.get("pozice", [])
     if not pozice:
         return ("F", None, {})
 
-    # Check for Aktualizovano (republished) — strongest signal
+    # Pre-compute metrics for all positions
+    total_pozic = len(pozice)
+    max_scanu = max(p.get("pocet_scanu", 1) for p in pozice)
+
+    # A2 — Republished (aktualizovano)
     for p in pozice:
         pub = p.get("publikovano") or ""
         if "ktualizov" in pub:
-            return ("A2", p, {})
+            dni = _compute_dni(p)
+            return ("A2", p, {
+                "dni": dni, "scanu": p.get("pocet_scanu", 1),
+                "total_pozic": total_pozic,
+            })
 
-    # Check for Opakovane (repeated posting)
+    # A3 — Repeated posting
     for p in pozice:
         if p.get("predchozi_job_id"):
-            return ("A3", p, {"predchozi_od": (p.get("predchozi_datum_prvni") or "?")[:10]})
+            predchozi_raw = (p.get("predchozi_datum_prvni") or "")[:10]
+            datum_display = ""
+            if predchozi_raw and len(predchozi_raw) >= 10:
+                try:
+                    pd = datetime.fromisoformat(predchozi_raw)
+                    now = datetime.now()
+                    _cz_gen = {1:"ledna",2:"února",3:"března",4:"dubna",5:"května",
+                               6:"června",7:"července",8:"srpna",9:"září",
+                               10:"října",11:"listopadu",12:"prosince"}
+                    datum_display = "{}. {}".format(pd.day, _cz_gen.get(pd.month, str(pd.month)))
+                except Exception:
+                    datum_display = predchozi_raw
+            return ("A3", p, {
+                "datum": datum_display,
+                "scanu": p.get("pocet_scanu", 1),
+                "total_pozic": total_pozic,
+            })
 
-    # Check for long-running (4+ scans or 30+ days)
+    # A1 — Long-running: pick position with highest scan count
+    best_a1 = None
+    best_scanu = 0
     for p in pozice:
         scanu = p.get("pocet_scanu", 1)
-        # Compute dni_aktivni from dates if not provided
-        dni = p.get("dni_aktivni")
-        if dni is None:
-            try:
-                d1 = datetime.fromisoformat(p["datum_prvni_scan"][:10])
-                dni = (datetime.now() - d1).days
-            except Exception:
-                dni = 0
-        if scanu >= 4 or (dni and dni >= 30):
-            return ("A1", p, {"dni": dni, "scanu": scanu})
+        dni = _compute_dni(p)
+        if scanu >= 4 or dni >= 30:
+            if scanu > best_scanu or (scanu == best_scanu and dni > _compute_dni(best_a1 or {})):
+                best_a1 = p
+                best_scanu = scanu
+    if best_a1:
+        dni = _compute_dni(best_a1)
+        return ("A1", best_a1, {
+            "dni": dni, "scanu": best_scanu,
+            "total_pozic": total_pozic,
+        })
 
-    # Check for hiring wave (3+ positions)
-    if len(pozice) >= 3:
-        return ("D", pozice[0], {"pocet": len(pozice)})
+    # D — Hiring wave (3+ positions)
+    if total_pozic >= 3:
+        names = [p["pozice"] for p in pozice[:3]]
+        return ("D", pozice[0], {"pocet": total_pozic, "names": names})
 
-    # Check for missing salary
+    # E — Missing salary
     for p in pozice:
         if not p.get("plat_text"):
-            return ("E", p, {})
+            return ("E", p, {"total_pozic": total_pozic})
 
-    # Fallback
-    return ("F", pozice[0], {})
+    # F — Fallback
+    return ("F", pozice[0], {"total_pozic": total_pozic})
 
 
-def _missile_text(archetype: str, osloveni: str, pozice_name: str,
-                  firma: str, kraj: str, extra: dict) -> str:
-    """Generate the actual DM text for a given archetype.
-    All texts: max ~300 chars, sign as Šárka, suggestive CTA,
-    no forbidden words (nabídka, klient, recruitment, agentura, headhunter, outsourcing).
+def _missile_text(archetype: str, osloveni: str, firma_data: dict,
+                  ref_pozice: dict, kraj: str, extra: dict) -> str:
+    """Three sentences. Fact → diagnosis → CTA.
+
+    Rules:
+    - Start with name + measurable fact about THEIR situation
+    - Diagnosis: what the fact means. Not sympathy. Not offer. Diagnosis.
+    - CTA: "Pošlete číslo." One step. Phone number. Done.
+    - No greeting. No introduction. No company name. Sign "Šárka".
+    - Forbidden: nabídka, klient, recruitment, agentura, headhunter, outsourcing
     """
+    poz = ref_pozice["pozice"] if ref_pozice else ""
+    scanu = extra.get("scanu", (ref_pozice or {}).get("pocet_scanu", 1))
+    dni = extra.get("dni", _compute_dni(ref_pozice) if ref_pozice else 0)
+
+    # ── A2: Republished ad ──────────────────────────────────────────
     if archetype == "A2":
+        if scanu >= 5:
+            return (
+                "{osl}, {poz} — {scanu}x ve scanu a obnoveno. "
+                "Inzerát, co po {scanu} kolech nepřitáhl správného člověka, ho nepřitáhne ani po dalším. "
+                "Pošlete číslo. — Šárka"
+            ).format(osl=osloveni, poz=poz, scanu=scanu)
         return (
-            "Dobrý den, {osl},\n\n"
-            "všimla jsem si, že jste obnovili inzerát na pozici {poz}. "
-            "Chápu — když se pozice nedaří obsadit, stojí to čas i energii.\n\n"
-            "Pomáháme firmám v {kraj} dostat se k lidem, kteří normálně nereagují "
-            "na inzeráty. Stálo by za to si napsat víc?\n\n"
-            "Šárka, Sintera"
-        ).format(osl=osloveni, poz=pozice_name, kraj=kraj)
+            "{osl}, {poz} jste obnovili. "
+            "Stejný inzerát přitáhne stejné lidi — ti, co jsou dobří, na portálech nehledají. "
+            "Pošlete číslo. — Šárka"
+        ).format(osl=osloveni, poz=poz)
 
-    elif archetype == "A3":
-        predchozi = extra.get("predchozi_od", "")
+    # ── A3: Repeated posting ────────────────────────────────────────
+    if archetype == "A3":
+        datum = extra.get("datum", "")
+        total_pozic = extra.get("total_pozic", 1)
+        if datum and scanu >= 4:
+            return (
+                "{osl}, {poz} — druhé kolo od {datum}, {scanu}x ve scanu. "
+                "Stejný portál + stejný inzerát = stejné CV. "
+                "Pošlete číslo. — Šárka"
+            ).format(osl=osloveni, poz=poz, datum=datum, scanu=scanu)
+        if datum and total_pozic >= 3:
+            return (
+                "{osl}, {poz} — znovu od {datum}, k tomu dalších {dalsi} pozic. "
+                "Portál podruhé přivede stejné CV. "
+                "Hoďte číslo. — Šárka"
+            ).format(osl=osloveni, poz=poz, datum=datum, dalsi=total_pozic - 1)
+        if datum:
+            return (
+                "{osl}, {poz} — předchozí od {datum} zanikla, teď znovu. "
+                "Portál podruhé přivede ty samé lidi. "
+                "Pošlete číslo, řeknu, kde jsou ti mimo portály. — Šárka"
+            ).format(osl=osloveni, poz=poz, datum=datum)
         return (
-            "Dobrý den, {osl},\n\n"
-            "vidím, že pozice {poz} u Vás běží opakovaně{od}. "
-            "Vím, jak to frustruje, když se to nedaří obsadit.\n\n"
-            "Máme síť lidí v {kraj}, kteří nejsou aktivně na trhu. "
-            "Dávalo by smysl si napsat?\n\n"
-            "Šárka, Sintera"
-        ).format(
-            osl=osloveni, poz=pozice_name, kraj=kraj,
-            od=" (už od {})".format(predchozi) if predchozi and predchozi != "?" else ""
-        )
+            "{osl}, {poz} — vypsáno podruhé. "
+            "Když první kolo nevyšlo, stejný kanál to nevyřeší. "
+            "Pošlete číslo. — Šárka"
+        ).format(osl=osloveni, poz=poz)
 
-    elif archetype == "A1":
-        dni = extra.get("dni", 0)
+    # ── A1: Long-running ────────────────────────────────────────────
+    if archetype == "A1":
+        if scanu >= 6 and dni >= 30:
+            return (
+                "{osl}, {poz} — {scanu}x ve scanu, {dni}. den. "
+                "Kdo měl z portálu reagovat, už reagoval. Zbytek musíte oslovit přímo. "
+                "Pošlete číslo. — Šárka"
+            ).format(osl=osloveni, poz=poz, scanu=scanu, dni=dni)
+        if scanu >= 4:
+            return (
+                "{osl}, {poz} — {scanu}x ve scanu. "
+                "Po {scanu} kolech bez obsazení portál nepomůže — lidi, co to umí, tam nehledají. "
+                "Hoďte číslo, za minutu řeknu, koho mám. — Šárka"
+            ).format(osl=osloveni, poz=poz, scanu=scanu)
+        # 30+ days, fewer scans
         return (
-            "Dobrý den, {osl},\n\n"
-            "vidím, že {poz} u Vás běží už {dni} dní. "
-            "Vím, jak to dokáže zdržet celý tým.\n\n"
-            "Pomáháme firmám v {kraj} přesně s tímhle — najít lidi, co sednou "
-            "a zůstanou. Stálo by za to si napsat?\n\n"
-            "Šárka, Sintera"
-        ).format(osl=osloveni, poz=pozice_name, kraj=kraj, dni=dni)
+            "{osl}, {poz} běží {dni} dní. "
+            "Po téhle době se pool na portálu vyčerpal. "
+            "Pošlete číslo, řeknu za 2 minuty, koho z oboru mám. — Šárka"
+        ).format(osl=osloveni, poz=poz, dni=dni)
 
-    elif archetype == "D":
+    # ── D: Hiring wave ──────────────────────────────────────────────
+    if archetype == "D":
         pocet = extra.get("pocet", 3)
+        names = extra.get("names", [])
+        if pocet > 5:
+            return (
+                "{osl}, {pocet} otevřených pozic. "
+                "Při tomhle objemu kandidáti z portálu nestačí — nejlepší zmizí do 48 hodin. "
+                "Hoďte číslo. — Šárka"
+            ).format(osl=osloveni, pocet=pocet)
+        names_str = ", ".join(names[:2])
         return (
-            "Dobrý den, {osl},\n\n"
-            "všimla jsem si, že budujete tým na {pocet} pozicích najednou"
-            " — to dá práci.\n\n"
-            "Pomáháme firmám v {kraj} řešit nábor efektivněji, "
-            "hlavně ve větším objemu. Stálo by za to si napsat?\n\n"
-            "Šárka, Sintera"
+            "{osl}, {pocet} pozic najednou — {names}. "
+            "Paralelní nábor přes inzeráty nestíháte pokrýt. "
+            "Pošlete číslo. — Šárka"
+        ).format(osl=osloveni, pocet=pocet, names=names_str)
+
+    # ── E: Missing salary ───────────────────────────────────────────
+    if archetype == "E":
+        return (
+            "{osl}, {poz} — bez platu v inzerátu. "
+            "Odezva je o polovinu nižší, nejlepší lidi tyhle přeskakují. "
+            "Pošlete číslo, řeknu, jestli jsou na trhu a za kolik. — Šárka"
+        ).format(osl=osloveni, poz=poz)
+
+    # ── F: Fallback — shortest possible ─────────────────────────────
+    pocet = extra.get("total_pozic", 1)
+    if pocet > 1:
+        return (
+            "{osl}, {pocet} otevřených pozic v {kraj}. "
+            "Lidi, co to umí, na portálech nehledají. "
+            "Hoďte číslo. — Šárka"
         ).format(osl=osloveni, pocet=pocet, kraj=kraj)
-
-    elif archetype == "E":
-        return (
-            "Dobrý den, {osl},\n\n"
-            "zaujala mě pozice {poz}. Bez uvedeného platu mívají inzeráty "
-            "nižší odezvu — my oslovujeme kandidáty přímo.\n\n"
-            "Ráda napíšu víc, kdyby Vás to zajímalo.\n\n"
-            "Šárka, Sintera"
-        ).format(osl=osloveni, poz=pozice_name)
-
-    else:  # F — fallback
-        return (
-            "Dobrý den, {osl},\n\n"
-            "vidím, že hledáte {poz} v {kraj}. Pomáháme firmám v regionu "
-            "s náborem — rychleji a cíleně.\n\n"
-            "Stálo by za krátkou výměnu?\n\n"
-            "Šárka, Sintera"
-        ).format(osl=osloveni, poz=pozice_name, kraj=kraj)
+    return (
+        "{osl}, hledáte {poz}. "
+        "Mám lidi z oboru, co na inzeráty nereagují. "
+        "Pošlete číslo. — Šárka"
+    ).format(osl=osloveni, poz=poz)
 
 
-# Human-readable archetype descriptions
 _ARCHETYPE_LABELS = {
     "A2": "Obnovený inzerát",
     "A3": "Opakovaně zadáno",
-    "A1": "Dlouho otevřená pozice",
-    "D": "Budují tým (3+ pozic)",
-    "E": "Bez platu v inzerátu",
+    "A1": "Dlouho otevřená",
+    "D": "Budují tým",
+    "E": "Bez platu",
     "F": "Aktivní nábor",
 }
 
@@ -1864,12 +1989,12 @@ _ARCHETYPE_COLORS = {
 
 
 def generate_missile_dms(kraj: str = "", limit: int = 50) -> list:
-    """MISSILE cold DM generator — personalized LinkedIn messages.
+    """MISSILE cold DM generator.
 
-    Uses radar_matches() to find companies with decision makers,
-    then picks the best archetype per company and generates a DM.
+    Fact → diagnosis → "Pošlete číslo."
+    Three sentences. No greetings. No introductions. No company name.
 
-    Returns list of dicts sorted by archetype priority + signal score.
+    Returns list sorted by archetype priority + signal score.
     Excludes already-contacted companies.
     """
     result = radar_matches(skip_fuzzy=True)
@@ -1877,36 +2002,34 @@ def generate_missile_dms(kraj: str = "", limit: int = 50) -> list:
 
     dms = []
     for m in matches:
-        # Skip already contacted
         if m.get("outreach_status"):
             continue
-
-        # Skip if no decision makers
         if not m.get("decision_makers"):
             continue
-
-        # Filter by kraj if specified
         if kraj and kraj not in m.get("kraje", []):
             continue
 
-        # Determine archetype
         archetype, ref_pozice, extra = _missile_archetype(m)
 
-        # Pick best DM contact
         dm = m["decision_makers"][0]
+        # Skip bad DM data: short names, incomplete records
+        last = dm.get("last_name", "").strip()
+        full = dm.get("full_name", "").strip()
+        if len(full) < 5 or len(last) <= 2:
+            continue
+        # Skip if last name looks like garbage (no uppercase letter)
+        clean_last = re.sub(r'[,\s]+(MBA|PhD|CSc|Ing|Mgr|Bc|DiS).*$', '', last, flags=re.IGNORECASE).strip().rstrip(',')
+        if clean_last and not any(c.isupper() for c in clean_last):
+            continue
         osloveni = _gender_osloveni(dm)
+        if not osloveni or len(osloveni) < 5:
+            continue
 
-        # Position name for reference
         pozice_name = ref_pozice["pozice"] if ref_pozice else m["pozice"][0]["pozice"]
-
-        # Region for the message
         msg_kraj = kraj or (m["kraje"][0] if m["kraje"] else "ČR")
 
-        # Generate DM text
-        text = _missile_text(archetype, osloveni, pozice_name,
-                             m["firma"], msg_kraj, extra)
+        text = _missile_text(archetype, osloveni, m, ref_pozice, msg_kraj, extra)
 
-        # Archetype metadata
         color, bg = _ARCHETYPE_COLORS.get(archetype, ("#64748b", "#f8fafc"))
         priority = _MISSILE_PRIORITY.get(archetype, 0)
 
@@ -1930,9 +2053,7 @@ def generate_missile_dms(kraj: str = "", limit: int = 50) -> list:
             "char_count": len(text),
         })
 
-    # Sort: archetype priority DESC, then signal score DESC
     dms.sort(key=lambda d: (d["priority"], d["signal_score"]), reverse=True)
-
     return dms[:limit]
 
 
