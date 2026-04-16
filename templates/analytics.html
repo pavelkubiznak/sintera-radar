@@ -1,0 +1,146 @@
+{% extends "_layout.html" %}
+{% set active_page = 'analytics' %}
+{% block title %}Analytics & Looker Studio — Sintera Radar{% endblock %}
+
+{% block extra_css %}
+<style>
+    .step-card { background: #fff; border-radius: 12px; padding: 20px 24px;
+                 border: 1px solid #e2e2e2; margin-bottom: 16px;
+                 display: flex; gap: 16px; align-items: start; }
+    .step-number { background: #6366f1; color: #fff; width: 36px; height: 36px;
+                   border-radius: 50%; display: flex; align-items: center;
+                   justify-content: center; font-weight: 700; font-size: 1.1em;
+                   flex-shrink: 0; }
+    .step-content h3 { font-size: 1em; margin-bottom: 6px; }
+    .step-content p { font-size: 0.88em; color: #666; line-height: 1.5; }
+    .step-content code { background: #f3f4f6; padding: 2px 8px; border-radius: 4px;
+                         font-size: 0.85em; color: #1e1b4b; }
+
+    .export-box { background: #f8f7ff; border: 2px solid #6366f1; border-radius: 12px;
+                  padding: 24px; text-align: center; margin: 24px 0; }
+    .export-box h2 { margin-bottom: 8px; color: #1e1b4b; }
+    .export-box p { color: #666; font-size: 0.9em; margin-bottom: 16px; }
+
+    .columns-table td:first-child { font-weight: 600; color: #1e1b4b; }
+    .columns-table td:nth-child(2) { color: #666; font-size: 0.85em; }
+    .columns-table td:nth-child(3) { font-size: 0.82em; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="main-header">
+    <h1>Analytics & Looker Studio</h1>
+    <div class="subtitle">Export dat pro Google Looker Studio (byvaly Data Studio). CSV s cistymi sloupci pro vizualizace.</div>
+</div>
+
+<!-- Export box -->
+<div class="export-box">
+    <h2>Stahnout data pro Looker Studio</h2>
+    <p>CSV soubor se vsemi aktivnimi pozicemi, pocitanymi sloupci a boolean flagy pro filtrovani.</p>
+    <a href="/api/analytics.csv" class="btn btn-primary" style="font-size:1em; padding:12px 32px;">
+        Stahnout CSV export
+    </a>
+    <p style="margin-top:12px; font-size:0.82em; color:#888;">
+        URL pro automaticky import do Google Sheets:
+        <br><code>https://178.104.207.97:5001/api/analytics.csv</code>
+    </p>
+</div>
+
+<!-- Columns reference -->
+<div class="card">
+    <h2>Popis sloupcu v exportu</h2>
+    <div style="overflow-x:auto;">
+    <table class="columns-table">
+        <thead>
+            <tr>
+                <th>Sloupec</th>
+                <th>Popis</th>
+                <th>Typ</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr><td>firma</td><td>Nazev firmy</td><td>Text</td></tr>
+            <tr><td>pozice</td><td>Nazev pozice</td><td>Text</td></tr>
+            <tr><td>kraj</td><td>Region / kraj</td><td>Text</td></tr>
+            <tr><td>obor</td><td>Obor pozice</td><td>Text</td></tr>
+            <tr><td>plat_text</td><td>Plat jako text (napr. "45 000 — 55 000 Kc")</td><td>Text</td></tr>
+            <tr><td>plat_od</td><td>Spodni hranice platu</td><td>Cislo</td></tr>
+            <tr><td>plat_do</td><td>Horni hranice platu</td><td>Cislo</td></tr>
+            <tr><td>plat_stred</td><td>Stred platoveho rozpeti</td><td>Cislo</td></tr>
+            <tr><td>ma_plat</td><td>Ma pozice uvedeny plat? (1/0)</td><td>Boolean</td></tr>
+            <tr><td>pocet_scanu</td><td>Kolikrat byla pozice videna ve scanech</td><td>Cislo</td></tr>
+            <tr><td>dni_aktivni</td><td>Pocet dnu od prvniho scanu</td><td>Cislo</td></tr>
+            <tr><td>datum_prvni</td><td>Datum prvniho zachyceni</td><td>Datum</td></tr>
+            <tr><td>datum_posledni</td><td>Datum posledniho scanu</td><td>Datum</td></tr>
+            <tr><td>je_aktualizovano</td><td>Pozice byla obnovena/aktualizovana (1/0)</td><td>Boolean</td></tr>
+            <tr><td>je_opakovane</td><td>Pozice je opakovane zadani (1/0)</td><td>Boolean</td></tr>
+            <tr><td>je_problematicke</td><td>Pozice videna 4+ scanu (1/0)</td><td>Boolean</td></tr>
+            <tr><td>je_starnouci</td><td>Pozice otevrena 21+ dnu (1/0)</td><td>Boolean</td></tr>
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<!-- How to connect -->
+<div class="card">
+    <h2>Jak propojit s Google Looker Studio</h2>
+</div>
+
+<div class="step-card">
+    <div class="step-number">1</div>
+    <div class="step-content">
+        <h3>Stahni CSV</h3>
+        <p>Klikni na tlacitko "Stahnout CSV export" vyse. Soubor <code>sintera_analytics.csv</code>
+           se ulozi na disk.</p>
+    </div>
+</div>
+
+<div class="step-card">
+    <div class="step-number">2</div>
+    <div class="step-content">
+        <h3>Nahraj do Google Sheets</h3>
+        <p>Otevri <a href="https://sheets.google.com" target="_blank" style="color:#6366f1;">Google Sheets</a>,
+           vytvor novy sesit, a importuj CSV (Soubor &rarr; Import &rarr; Nahrat).
+           <br>Nebo pouzij Google Apps Script pro automaticky import — viz nize.</p>
+    </div>
+</div>
+
+<div class="step-card">
+    <div class="step-number">3</div>
+    <div class="step-content">
+        <h3>Pripoj Looker Studio</h3>
+        <p>Otevri <a href="https://lookerstudio.google.com" target="_blank" style="color:#6366f1;">Looker Studio</a>,
+           pridej novy zdroj dat &rarr; Google Sheets &rarr; vyber sesit z kroku 2.
+           <br>Sloupce <code>je_aktualizovano</code>, <code>je_opakovane</code> atd. pouzij jako filtry.</p>
+    </div>
+</div>
+
+<div class="step-card">
+    <div class="step-number">4</div>
+    <div class="step-content">
+        <h3>Automaticky import (volitelne)</h3>
+        <p>Pro automaticky import po kazdem scanu pridej tento Apps Script do Google Sheets:</p>
+        <pre style="background:#f3f4f6; padding:12px; border-radius:8px; font-size:0.82em; overflow-x:auto; margin-top:8px; line-height:1.5;">
+function importSinteraCSV() {
+  var url = "http://178.104.207.97:5001/api/analytics.csv";
+  var response = UrlFetchApp.fetch(url, {
+    headers: {
+      "Authorization": "Basic " + Utilities.base64Encode("sintera:radar2026")
+    }
+  });
+  var csv = Utilities.parseCsv(response.getContentText());
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Data");
+  if (!sheet) sheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet("Data");
+  sheet.clear();
+  sheet.getRange(1, 1, csv.length, csv[0].length).setValues(csv);
+}
+// Nastav trigger: Edit > Triggers > importSinteraCSV > Time-driven > Daily</pre>
+    </div>
+</div>
+
+<div style="margin-top:16px; display:flex; gap:8px;">
+    <a href="/" class="btn btn-outline btn-sm">Dashboard</a>
+    <a href="/benchmark" class="btn btn-outline btn-sm">Platovy benchmark</a>
+    <a href="/export-db" class="btn btn-outline btn-sm">Plny DB export (stary)</a>
+</div>
+{% endblock %}

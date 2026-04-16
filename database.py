@@ -1705,6 +1705,437 @@ def generate_batch_messages(recommendations: list, template: str = "") -> list:
     return messages
 
 
+# ── MISSILE: Cold LinkedIn DM Generator ──────────────────────────────────────
+
+# Archetype priority order (highest first)
+_MISSILE_PRIORITY = {"A2": 6, "A3": 5, "A1": 4, "D": 3, "E": 2, "F": 1}
+
+# Czech female first-name endings (heuristic for Pane/Paní)
+_FEMALE_ENDINGS = ("ová", "á", "ová,")
+
+
+def _gender_osloveni(dm: dict) -> str:
+    """Returns 'Paní Nováková' or 'Pane Novák' based on Czech gender heuristics."""
+    last = dm.get("last_name", "").strip()
+    first = dm.get("first_name", "").strip()
+    full = dm.get("full_name", "").strip()
+    if last:
+        if any(last.endswith(e) for e in _FEMALE_ENDINGS):
+            return "paní {}".format(last)
+        return "pane {}".format(last)
+    return full or "dobrý den"
+
+
+def _missile_archetype(firma_data: dict) -> tuple:
+    """Determine the best MISSILE archetype for a company.
+    Returns (archetype_code, reference_position, extra_data).
+    """
+    pozice = firma_data.get("pozice", [])
+    if not pozice:
+        return ("F", None, {})
+
+    # Check for Aktualizovano (republished) — strongest signal
+    for p in pozice:
+        pub = p.get("publikovano") or ""
+        if "ktualizov" in pub:
+            return ("A2", p, {})
+
+    # Check for Opakovane (repeated posting)
+    for p in pozice:
+        if p.get("predchozi_job_id"):
+            return ("A3", p, {"predchozi_od": (p.get("predchozi_datum_prvni") or "?")[:10]})
+
+    # Check for long-running (4+ scans or 30+ days)
+    for p in pozice:
+        scanu = p.get("pocet_scanu", 1)
+        # Compute dni_aktivni from dates if not provided
+        dni = p.get("dni_aktivni")
+        if dni is None:
+            try:
+                d1 = datetime.fromisoformat(p["datum_prvni_scan"][:10])
+                dni = (datetime.now() - d1).days
+            except Exception:
+                dni = 0
+        if scanu >= 4 or (dni and dni >= 30):
+            return ("A1", p, {"dni": dni, "scanu": scanu})
+
+    # Check for hiring wave (3+ positions)
+    if len(pozice) >= 3:
+        return ("D", pozice[0], {"pocet": len(pozice)})
+
+    # Check for missing salary
+    for p in pozice:
+        if not p.get("plat_text"):
+            return ("E", p, {})
+
+    # Fallback
+    return ("F", pozice[0], {})
+
+
+def _missile_text(archetype: str, osloveni: str, pozice_name: str,
+                  firma: str, kraj: str, extra: dict) -> str:
+    """Generate the actual DM text for a given archetype.
+    All texts: max ~300 chars, sign as Šárka, suggestive CTA,
+    no forbidden words (nabídka, klient, recruitment, agentura, headhunter, outsourcing).
+    """
+    if archetype == "A2":
+        return (
+            "Dobrý den, {osl},\n\n"
+            "všimla jsem si, že jste obnovili inzerát na pozici {poz}. "
+            "Chápu — když se pozice nedaří obsadit, stojí to čas i energii.\n\n"
+            "Pomáháme firmám v {kraj} dostat se k lidem, kteří normálně nereagují "
+            "na inzeráty. Stálo by za to si napsat víc?\n\n"
+            "Šárka, Sintera"
+        ).format(osl=osloveni, poz=pozice_name, kraj=kraj)
+
+    elif archetype == "A3":
+        predchozi = extra.get("predchozi_od", "")
+        return (
+            "Dobrý den, {osl},\n\n"
+            "vidím, že pozice {poz} u Vás běží opakovaně{od}. "
+            "Vím, jak to frustruje, když se to nedaří obsadit.\n\n"
+            "Máme síť lidí v {kraj}, kteří nejsou aktivně na trhu. "
+            "Dávalo by smysl si napsat?\n\n"
+            "Šárka, Sintera"
+        ).format(
+            osl=osloveni, poz=pozice_name, kraj=kraj,
+            od=" (už od {})".format(predchozi) if predchozi and predchozi != "?" else ""
+        )
+
+    elif archetype == "A1":
+        dni = extra.get("dni", 0)
+        return (
+            "Dobrý den, {osl},\n\n"
+            "vidím, že {poz} u Vás běží už {dni} dní. "
+            "Vím, jak to dokáže zdržet celý tým.\n\n"
+            "Pomáháme firmám v {kraj} přesně s tímhle — najít lidi, co sednou "
+            "a zůstanou. Stálo by za to si napsat?\n\n"
+            "Šárka, Sintera"
+        ).format(osl=osloveni, poz=pozice_name, kraj=kraj, dni=dni)
+
+    elif archetype == "D":
+        pocet = extra.get("pocet", 3)
+        return (
+            "Dobrý den, {osl},\n\n"
+            "všimla jsem si, že budujete tým na {pocet} pozicích najednou"
+            " — to dá práci.\n\n"
+            "Pomáháme firmám v {kraj} řešit nábor efektivněji, "
+            "hlavně ve větším objemu. Stálo by za to si napsat?\n\n"
+            "Šárka, Sintera"
+        ).format(osl=osloveni, pocet=pocet, kraj=kraj)
+
+    elif archetype == "E":
+        return (
+            "Dobrý den, {osl},\n\n"
+            "zaujala mě pozice {poz}. Bez uvedeného platu mívají inzeráty "
+            "nižší odezvu — my oslovujeme kandidáty přímo.\n\n"
+            "Ráda napíšu víc, kdyby Vás to zajímalo.\n\n"
+            "Šárka, Sintera"
+        ).format(osl=osloveni, poz=pozice_name)
+
+    else:  # F — fallback
+        return (
+            "Dobrý den, {osl},\n\n"
+            "vidím, že hledáte {poz} v {kraj}. Pomáháme firmám v regionu "
+            "s náborem — rychleji a cíleně.\n\n"
+            "Stálo by za krátkou výměnu?\n\n"
+            "Šárka, Sintera"
+        ).format(osl=osloveni, poz=pozice_name, kraj=kraj)
+
+
+# Human-readable archetype descriptions
+_ARCHETYPE_LABELS = {
+    "A2": "Obnovený inzerát",
+    "A3": "Opakovaně zadáno",
+    "A1": "Dlouho otevřená pozice",
+    "D": "Budují tým (3+ pozic)",
+    "E": "Bez platu v inzerátu",
+    "F": "Aktivní nábor",
+}
+
+_ARCHETYPE_COLORS = {
+    "A2": ("#dc2626", "#fef2f2"),
+    "A3": ("#7c3aed", "#faf5ff"),
+    "A1": ("#ea580c", "#fff7ed"),
+    "D": ("#2563eb", "#dbeafe"),
+    "E": ("#d97706", "#fefce8"),
+    "F": ("#64748b", "#f8fafc"),
+}
+
+
+def generate_missile_dms(kraj: str = "", limit: int = 50) -> list:
+    """MISSILE cold DM generator — personalized LinkedIn messages.
+
+    Uses radar_matches() to find companies with decision makers,
+    then picks the best archetype per company and generates a DM.
+
+    Returns list of dicts sorted by archetype priority + signal score.
+    Excludes already-contacted companies.
+    """
+    result = radar_matches(skip_fuzzy=True)
+    matches = result.get("matches", [])
+
+    dms = []
+    for m in matches:
+        # Skip already contacted
+        if m.get("outreach_status"):
+            continue
+
+        # Skip if no decision makers
+        if not m.get("decision_makers"):
+            continue
+
+        # Filter by kraj if specified
+        if kraj and kraj not in m.get("kraje", []):
+            continue
+
+        # Determine archetype
+        archetype, ref_pozice, extra = _missile_archetype(m)
+
+        # Pick best DM contact
+        dm = m["decision_makers"][0]
+        osloveni = _gender_osloveni(dm)
+
+        # Position name for reference
+        pozice_name = ref_pozice["pozice"] if ref_pozice else m["pozice"][0]["pozice"]
+
+        # Region for the message
+        msg_kraj = kraj or (m["kraje"][0] if m["kraje"] else "ČR")
+
+        # Generate DM text
+        text = _missile_text(archetype, osloveni, pozice_name,
+                             m["firma"], msg_kraj, extra)
+
+        # Archetype metadata
+        color, bg = _ARCHETYPE_COLORS.get(archetype, ("#64748b", "#f8fafc"))
+        priority = _MISSILE_PRIORITY.get(archetype, 0)
+
+        dms.append({
+            "firma": m["firma"],
+            "firma_norm": m["firma_norm"],
+            "kontakt": dm["full_name"],
+            "kontakt_title": dm.get("current_title", ""),
+            "linkedin_url": dm.get("profile_url", ""),
+            "kraj": msg_kraj,
+            "signal": m.get("signal", ""),
+            "signal_score": m.get("signal_score", 0),
+            "pocet_pozic": m["pocet_pozic"],
+            "archetype": archetype,
+            "archetype_label": _ARCHETYPE_LABELS.get(archetype, ""),
+            "archetype_color": color,
+            "archetype_bg": bg,
+            "priority": priority,
+            "pozice_ref": pozice_name,
+            "zprava": text,
+            "char_count": len(text),
+        })
+
+    # Sort: archetype priority DESC, then signal score DESC
+    dms.sort(key=lambda d: (d["priority"], d["signal_score"]), reverse=True)
+
+    return dms[:limit]
+
+
+# ── Salary benchmark ──────────────────────────────────────────────────────────
+
+def salary_benchmark(kraj: str = "", keyword: str = "") -> dict:
+    """Salary statistics by region and/or position keyword.
+
+    Returns aggregated stats: avg, median, min, max, count
+    grouped by region and position keyword.
+    """
+    na = "AND is_agency = 0"
+
+    with get_conn() as conn:
+        # Overall stats by region
+        where_parts = ["aktivni = 1", "plat_od > 0", "is_agency = 0"]
+        params = []
+
+        if kraj:
+            where_parts.append("kraj = ?")
+            params.append(kraj)
+        if keyword:
+            where_parts.append("LOWER(pozice) LIKE ?")
+            params.append("%{}%".format(keyword.lower()))
+
+        where_clause = " AND ".join(where_parts)
+
+        # Per-region breakdown
+        region_stats = [dict(r) for r in conn.execute(f"""
+            SELECT kraj,
+                   COUNT(*) as pocet,
+                   CAST(AVG(plat_od) AS INTEGER) as avg_od,
+                   CAST(AVG(plat_do) AS INTEGER) as avg_do,
+                   MIN(plat_od) as min_plat,
+                   MAX(plat_do) as max_plat,
+                   CAST(AVG((plat_od + plat_do) / 2) AS INTEGER) as avg_stred
+            FROM nabidky
+            WHERE {where_clause} AND kraj != ''
+            GROUP BY kraj
+            ORDER BY avg_stred DESC
+        """, params).fetchall()]
+
+        # Top positions by salary
+        top_salary = [dict(r) for r in conn.execute(f"""
+            SELECT pozice, firma, kraj, plat_text, plat_od, plat_do,
+                   (plat_od + plat_do) / 2 as plat_stred
+            FROM nabidky
+            WHERE {where_clause}
+            ORDER BY plat_stred DESC
+            LIMIT 20
+        """, params).fetchall()]
+
+        # Position keyword breakdown (top groups)
+        # Group by first significant word in pozice
+        all_positions = conn.execute(f"""
+            SELECT pozice, plat_od, plat_do, kraj
+            FROM nabidky
+            WHERE {where_clause}
+        """, params).fetchall()
+
+        # Aggregate by common position keywords
+        keyword_stats = {}
+        for row in all_positions:
+            poz = row["pozice"].lower()
+            # Extract key terms
+            for term in _SALARY_KEYWORDS:
+                if term in poz:
+                    if term not in keyword_stats:
+                        keyword_stats[term] = {"count": 0, "platy_od": [], "platy_do": []}
+                    keyword_stats[term]["count"] += 1
+                    keyword_stats[term]["platy_od"].append(row["plat_od"])
+                    keyword_stats[term]["platy_do"].append(row["plat_do"])
+
+        position_groups = []
+        for term, data in sorted(keyword_stats.items(), key=lambda x: x[1]["count"], reverse=True):
+            if data["count"] >= 2:
+                od_list = sorted(data["platy_od"])
+                do_list = sorted(data["platy_do"])
+                mid = len(od_list) // 2
+                position_groups.append({
+                    "keyword": term,
+                    "count": data["count"],
+                    "avg_od": int(sum(od_list) / len(od_list)),
+                    "avg_do": int(sum(do_list) / len(do_list)),
+                    "median_od": od_list[mid],
+                    "median_do": do_list[mid],
+                    "min_plat": min(od_list),
+                    "max_plat": max(do_list),
+                })
+
+        # Total stats
+        total = conn.execute(f"""
+            SELECT COUNT(*) as pocet,
+                   CAST(AVG(plat_od) AS INTEGER) as avg_od,
+                   CAST(AVG(plat_do) AS INTEGER) as avg_do,
+                   MIN(plat_od) as min_plat,
+                   MAX(plat_do) as max_plat,
+                   CAST(AVG((plat_od + plat_do) / 2) AS INTEGER) as avg_stred
+            FROM nabidky
+            WHERE {where_clause}
+        """, params).fetchone()
+
+        # Count of positions without salary
+        no_salary_params = []
+        no_salary_where = ["aktivni = 1", "is_agency = 0", "(plat_od IS NULL OR plat_od = 0)"]
+        if kraj:
+            no_salary_where.append("kraj = ?")
+            no_salary_params.append(kraj)
+        if keyword:
+            no_salary_where.append("LOWER(pozice) LIKE ?")
+            no_salary_params.append("%{}%".format(keyword.lower()))
+
+        bez_platu = conn.execute(
+            "SELECT COUNT(*) FROM nabidky WHERE {}".format(" AND ".join(no_salary_where)),
+            no_salary_params
+        ).fetchone()[0]
+
+    return {
+        "region_stats": region_stats,
+        "top_salary": top_salary,
+        "position_groups": position_groups[:20],
+        "total": dict(total) if total else {},
+        "bez_platu": bez_platu,
+        "filtr_kraj": kraj,
+        "filtr_keyword": keyword,
+    }
+
+
+# Common position keywords for salary grouping
+_SALARY_KEYWORDS = [
+    "manager", "manažer", "ředitel", "director",
+    "developer", "vývojář", "programátor", "engineer",
+    "analyst", "analytik",
+    "účetní", "accountant",
+    "obchodní", "sales", "obchodník",
+    "technik", "technician",
+    "logistik", "logistics",
+    "marketing", "marketér",
+    "hr", "personalista",
+    "quality", "kvalita",
+    "project", "projektový",
+    "it ", "it-",
+    "java", "python", ".net", "c#", "react",
+    "controller", "controlling",
+    "nákupčí", "buyer", "procurement",
+    "konstruktér", "designer",
+    "elektro", "electrical",
+    "strojní", "mechanical",
+    "operátor", "operator",
+    "vedoucí", "team lead",
+    "data", "admin",
+]
+
+
+# ── Analytics export ──────────────────────────────────────────────────────────
+
+def analytics_export_data() -> list:
+    """Flat table of all active positions with computed boolean columns.
+    Designed for Google Sheets → Looker Studio pipeline.
+    """
+    na = "AND is_agency = 0"
+
+    with get_conn() as conn:
+        rows = conn.execute(f"""
+            SELECT
+                n.firma,
+                n.pozice,
+                n.kraj,
+                n.obor,
+                n.plat_text,
+                n.plat_od,
+                n.plat_do,
+                n.url,
+                n.pocet_scanu,
+                n.datum_prvni_scan,
+                n.datum_posledni_scan,
+                n.publikovano,
+                n.predchozi_job_id,
+                n.predchozi_datum_prvni,
+                CAST(JULIANDAY('now') - JULIANDAY(n.datum_prvni_scan) AS INTEGER) AS dni_aktivni
+            FROM nabidky n
+            WHERE n.aktivni = 1 {na}
+            ORDER BY n.firma, n.pozice
+        """).fetchall()
+
+    result = []
+    for r in rows:
+        row = dict(r)
+        # Computed booleans for Looker Studio filters
+        row["je_aktualizovano"] = 1 if (row.get("publikovano") or "") and "ktualizov" in row["publikovano"] else 0
+        row["je_opakovane"] = 1 if row.get("predchozi_job_id") else 0
+        row["je_problematicke"] = 1 if row.get("pocet_scanu", 0) >= 4 else 0
+        row["je_starnouci"] = 1 if (row.get("dni_aktivni") or 0) >= 21 else 0
+        row["ma_plat"] = 1 if row.get("plat_od") and row["plat_od"] > 0 else 0
+        row["plat_stred"] = int((row["plat_od"] + row["plat_do"]) / 2) if row.get("plat_od") and row.get("plat_do") else 0
+        # Clean date columns for Sheets
+        row["datum_prvni"] = (row.get("datum_prvni_scan") or "")[:10]
+        row["datum_posledni"] = (row.get("datum_posledni_scan") or "")[:10]
+        result.append(row)
+
+    return result
+
+
 if __name__ == "__main__":
     init_db()
     print(f"Databáze inicializována: {DB_PATH}")

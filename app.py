@@ -20,7 +20,8 @@ from database import (init_db, uloz_nabidky, nacti_nabidky, statistiky, exportuj
                        nacti_outreach, outreach_statistiky, OUTREACH_STATUSES,
                        radar_doporuceni, detect_surge, generate_batch_messages,
                        normalize_company, firma_detail, dashboard_stats,
-                       filtr_pozice, firmy_prehled)
+                       filtr_pozice, firmy_prehled,
+                       generate_missile_dms, salary_benchmark, analytics_export_data)
 
 app = Flask(__name__)
 init_db()
@@ -515,6 +516,57 @@ def batch_page():
     messages = generate_batch_messages(recommendations)
     return render_template("batch.html",
                            messages=messages, per_region=per_region, kraje=KRAJE)
+
+
+# ── MISSILE DM Generator ───────────────────────────────────────────────────
+
+@app.route("/missile")
+def missile_page():
+    kraj = request.args.get("kraj", "")
+    limit = int(request.args.get("limit", 50))
+    dms = generate_missile_dms(kraj=kraj, limit=limit)
+    return render_template("missile.html",
+                           dms=dms, kraj=kraj, limit=limit, kraje=KRAJE)
+
+
+# ── Salary Benchmark ───────────────────────────────────────────────────────
+
+@app.route("/benchmark")
+def benchmark_page():
+    kraj = request.args.get("kraj", "")
+    keyword = request.args.get("keyword", "").strip()
+    data = salary_benchmark(kraj=kraj, keyword=keyword)
+    return render_template("benchmark.html",
+                           data=data, kraj=kraj, keyword=keyword, kraje=KRAJE)
+
+
+# ── Analytics Export (CSV for Looker Studio) ────────────────────────────────
+
+@app.route("/analytics")
+def analytics_page():
+    return render_template("analytics.html", kraje=KRAJE)
+
+
+@app.route("/api/analytics.csv")
+def api_analytics_csv():
+    rows = analytics_export_data()
+    if not rows:
+        return Response("No data", mimetype="text/plain")
+    buf = io.StringIO()
+    fieldnames = [
+        "firma", "pozice", "kraj", "obor", "plat_text", "plat_od", "plat_do",
+        "plat_stred", "ma_plat", "url", "pocet_scanu", "dni_aktivni",
+        "datum_prvni", "datum_posledni", "publikovano",
+        "je_aktualizovano", "je_opakovane", "je_problematicke", "je_starnouci",
+    ]
+    writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    return Response(
+        buf.getvalue().encode("utf-8-sig"),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=sintera_analytics.csv"},
+    )
 
 
 if __name__ == "__main__":

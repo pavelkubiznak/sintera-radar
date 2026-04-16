@@ -1,0 +1,201 @@
+{% extends "_layout.html" %}
+{% set active_page = 'missile' %}
+{% block title %}MISSILE DM Generator — Sintera Radar{% endblock %}
+
+{% block extra_css %}
+<style>
+    .missile-header { margin-bottom: 24px; }
+    .missile-header h1 { font-size: 1.5em; }
+    .missile-header .sub { color: #888; font-size: 0.9em; margin-top: 4px; }
+
+    .controls { display: flex; gap: 12px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
+    .controls label { font-size: 0.9em; color: #666; }
+    .controls select { padding: 6px 12px; border: 1px solid #ccc; border-radius: 6px; }
+
+    .dm-card { background: #fff; border-radius: 12px; padding: 0; overflow: hidden;
+               border: 1px solid #e2e2e2; margin-bottom: 16px; }
+    .dm-card:hover { box-shadow: 0 2px 12px rgba(99, 102, 241, 0.1); }
+
+    .dm-card-top { display: flex; justify-content: space-between; align-items: start;
+                   flex-wrap: wrap; gap: 8px; padding: 16px 20px 12px;
+                   border-bottom: 1px solid #f0f0f0; }
+    .dm-firma { font-size: 1.1em; font-weight: 700; }
+    .dm-meta { font-size: 0.82em; color: #888; margin-top: 2px; }
+    .dm-meta a { color: #6366f1; text-decoration: none; }
+    .dm-meta a:hover { text-decoration: underline; }
+
+    .archetype-badge { display: inline-block; padding: 3px 12px; border-radius: 12px;
+                       font-size: 0.78em; font-weight: 700; }
+    .dm-signal { font-size: 0.78em; margin-top: 4px; }
+
+    .dm-text-wrap { padding: 16px 20px; background: #f8f7ff; }
+    .dm-text { white-space: pre-wrap; font-size: 0.88em; line-height: 1.65;
+               color: #1e1b4b; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .dm-char-count { font-size: 0.75em; color: #888; margin-top: 8px; text-align: right; }
+    .dm-char-count.over { color: #dc2626; font-weight: 600; }
+
+    .dm-actions { padding: 12px 20px 16px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+    .count-badge { background: #6366f1; color: #fff; padding: 2px 10px;
+                   border-radius: 10px; font-size: 0.85em; font-weight: 600; }
+
+    .legend { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+    .legend-item { display: flex; align-items: center; gap: 6px; font-size: 0.82em; }
+    .legend-dot { width: 12px; height: 12px; border-radius: 50%; }
+
+    .copy-ok { color: #16a34a; font-weight: 600; font-size: 0.82em; display: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="missile-header">
+    <h1>MISSILE DM Generator <span class="count-badge">{{ dms|length }}</span></h1>
+    <div class="sub">
+        Personalizovane LinkedIn zpravy podle signalu. Zkopiruj — otevri LinkedIn — posli.
+        <br>Podpis: Sarka, Sintera | Max 300 znaku | Bez zakazanych slov
+    </div>
+</div>
+
+<!-- Legend -->
+<div class="legend">
+    <div class="legend-item">
+        <span class="legend-dot" style="background:#dc2626;"></span> Obnoveny inzerat (A2)
+    </div>
+    <div class="legend-item">
+        <span class="legend-dot" style="background:#7c3aed;"></span> Opakovane zadano (A3)
+    </div>
+    <div class="legend-item">
+        <span class="legend-dot" style="background:#ea580c;"></span> Dlouho otevrena (A1)
+    </div>
+    <div class="legend-item">
+        <span class="legend-dot" style="background:#2563eb;"></span> Buduje tym (D)
+    </div>
+    <div class="legend-item">
+        <span class="legend-dot" style="background:#d97706;"></span> Bez platu (E)
+    </div>
+    <div class="legend-item">
+        <span class="legend-dot" style="background:#64748b;"></span> Aktivni nabor (F)
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="controls">
+    <label>Region:</label>
+    <select onchange="location.href='/missile?kraj='+this.value+'&limit={{ limit }}'">
+        <option value="">Vsechny kraje</option>
+        {% for kod, (nazev, slug) in kraje.items() %}
+        <option value="{{ nazev }}" {% if kraj == nazev %}selected{% endif %}>{{ nazev }}</option>
+        {% endfor %}
+    </select>
+
+    <label>Limit:</label>
+    <select onchange="location.href='/missile?kraj={{ kraj }}&limit='+this.value">
+        {% for n in [10, 25, 50, 100] %}
+        <option value="{{ n }}" {% if limit == n %}selected{% endif %}>{{ n }}</option>
+        {% endfor %}
+    </select>
+
+    <span class="text-muted">
+        {{ dms|length }} zprav pripraveno
+    </span>
+</div>
+
+{% if not dms %}
+<div class="card" style="text-align:center; padding:40px;">
+    <p class="text-muted">Zadne DM ke generovani — bud jsou vsechny firmy osloveny,
+       nebo nejsou shody s decision makers.</p>
+    <p class="text-muted" style="margin-top:8px;">
+        Zkontrolujte <a href="/radar" style="color:#6366f1;">Radar</a> nebo
+        <a href="/decision-makers" style="color:#6366f1;">nahrajte Decision Makers</a>.
+    </p>
+</div>
+{% endif %}
+
+{% for dm in dms %}
+<div class="dm-card" id="dm-{{ loop.index }}">
+    <div class="dm-card-top">
+        <div>
+            <div class="dm-firma">
+                <a class="firma-link" href="/firma/{{ dm.firma_norm }}">{{ dm.firma }}</a>
+            </div>
+            <div class="dm-meta">
+                <a href="{{ dm.linkedin_url }}" target="_blank">{{ dm.kontakt }}</a>
+                {% if dm.kontakt_title %} — {{ dm.kontakt_title }}{% endif %}
+                | {{ dm.pocet_pozic }} pozic | {{ dm.kraj }}
+            </div>
+            <div class="dm-signal">
+                <span class="signal signal-{% if 'neobsaz' in dm.signal %}red{% elif 'Dlouho' in dm.signal %}orange{% elif 'Rozšiř' in dm.signal %}blue{% else %}green{% endif %}">
+                    {{ dm.signal }}
+                </span>
+                | Ref. pozice: <strong>{{ dm.pozice_ref }}</strong>
+            </div>
+        </div>
+        <div style="text-align: right;">
+            <span class="archetype-badge" style="color: {{ dm.archetype_color }}; background: {{ dm.archetype_bg }};">
+                {{ dm.archetype }} — {{ dm.archetype_label }}
+            </span>
+        </div>
+    </div>
+
+    <div class="dm-text-wrap">
+        <div class="dm-text" id="text-{{ loop.index }}">{{ dm.zprava }}</div>
+        <div class="dm-char-count {% if dm.char_count > 300 %}over{% endif %}">
+            {{ dm.char_count }} znaku {% if dm.char_count > 300 %}(prekrocen limit 300!){% endif %}
+        </div>
+    </div>
+
+    <div class="dm-actions">
+        <button class="btn btn-primary btn-sm" onclick="copyDM({{ loop.index }})">
+            Zkopirovat zpravu
+        </button>
+        <span class="copy-ok" id="copy-ok-{{ loop.index }}">Zkopirovano!</span>
+        {% if dm.linkedin_url %}
+        <a href="{{ dm.linkedin_url }}" target="_blank" class="btn btn-outline btn-sm">
+            Otevrit LinkedIn
+        </a>
+        {% endif %}
+        <button class="btn btn-green btn-sm"
+                onclick="markSent('{{ dm.firma_norm }}', '{{ dm.firma }}', '{{ dm.kontakt }}', '{{ dm.linkedin_url }}', '{{ dm.kraj }}')">
+            Oznacit jako odeslano
+        </button>
+        <a href="/firma/{{ dm.firma_norm }}" class="btn btn-outline btn-sm">Detail firmy</a>
+    </div>
+</div>
+{% endfor %}
+
+{% if dms %}
+<div style="margin-top:16px; display:flex; gap:8px;">
+    <a href="/" class="btn btn-outline btn-sm">Dashboard</a>
+    <a href="/batch" class="btn btn-outline btn-sm">Batch zpravy (stary styl)</a>
+    <a href="/outreach" class="btn btn-outline btn-sm">Outreach CRM</a>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function copyDM(idx) {
+    const text = document.getElementById('text-' + idx).innerText;
+    navigator.clipboard.writeText(text).then(() => {
+        const ok = document.getElementById('copy-ok-' + idx);
+        ok.style.display = 'inline';
+        setTimeout(() => { ok.style.display = 'none'; }, 2000);
+    });
+}
+
+function markSent(firmaNorm, firma, kontakt, kontaktUrl, kraj) {
+    if (!confirm('Oznacit zpravu pro ' + firma + ' jako odeslanou?')) return;
+    fetch('/api/mark-contacted', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            firma: firma, firma_norm: firmaNorm,
+            kontakt: kontakt, kontakt_url: kontaktUrl,
+            kanal: 'LinkedIn DM', kraj: kraj
+        })
+    }).then(r => r.json()).then(data => {
+        if (data.ok) location.reload();
+    });
+}
+</script>
+{% endblock %}

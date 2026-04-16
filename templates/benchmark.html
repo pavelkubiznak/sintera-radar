@@ -1,0 +1,193 @@
+{% extends "_layout.html" %}
+{% set active_page = 'benchmark' %}
+{% block title %}Platovy benchmark — Sintera Radar{% endblock %}
+
+{% block extra_css %}
+<style>
+    .benchmark-header { margin-bottom: 24px; }
+    .benchmark-header h1 { font-size: 1.5em; }
+
+    .controls { display: flex; gap: 12px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
+    .controls label { font-size: 0.9em; color: #666; font-weight: 600; }
+    .controls select, .controls input { padding: 6px 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 0.9em; }
+    .controls input { width: 200px; }
+
+    .stat-big { text-align: center; }
+    .stat-big .number { font-size: 2em; font-weight: 700; color: #6366f1; }
+    .stat-big .label { font-size: 0.82em; color: #888; }
+
+    .bar-chart { margin: 8px 0; }
+    .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .bar-label { width: 140px; font-size: 0.82em; text-align: right; flex-shrink: 0; }
+    .bar-bg { flex: 1; background: #f0f0f0; border-radius: 6px; height: 24px; position: relative; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 6px; display: flex; align-items: center; padding: 0 8px;
+                font-size: 0.72em; font-weight: 600; color: #fff; min-width: 40px; }
+    .bar-value { font-size: 0.82em; color: #444; width: 120px; flex-shrink: 0; }
+
+    .salary-range { display: inline-block; background: #d1fae5; color: #065f46; padding: 2px 8px;
+                    border-radius: 6px; font-size: 0.82em; font-weight: 600; white-space: nowrap; }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="benchmark-header">
+    <h1>Platovy benchmark</h1>
+    <div class="subtitle">Analyza platu z aktivnich pozic na jobs.cz (bez agentur). Pro klienty a interni prehled.</div>
+</div>
+
+<!-- Filters -->
+<form class="controls" method="GET" action="/benchmark">
+    <label>Region:</label>
+    <select name="kraj">
+        <option value="">Vsechny kraje</option>
+        {% for kod, (nazev, slug) in kraje.items() %}
+        <option value="{{ nazev }}" {% if kraj == nazev %}selected{% endif %}>{{ nazev }}</option>
+        {% endfor %}
+    </select>
+
+    <label>Pozice (klicove slovo):</label>
+    <input type="text" name="keyword" value="{{ keyword }}" placeholder="napr. developer, manager...">
+
+    <button type="submit" class="btn btn-primary btn-sm">Filtrovat</button>
+    {% if kraj or keyword %}
+    <a href="/benchmark" class="btn btn-outline btn-sm">Resetovat</a>
+    {% endif %}
+</form>
+
+<!-- Summary stats -->
+{% if data.total and data.total.pocet %}
+<div class="stats-row">
+    <div class="stat-card purple" style="text-align:center;">
+        <div class="number">{{ data.total.pocet }}</div>
+        <div class="label">Pozic s platem</div>
+    </div>
+    <div class="stat-card green" style="text-align:center;">
+        <div class="number">{{ "{:,}".format(data.total.avg_stred).replace(",", " ") }} Kc</div>
+        <div class="label">Prumerny plat (stred)</div>
+    </div>
+    <div class="stat-card" style="text-align:center;">
+        <div class="number" style="font-size:1.3em;">{{ "{:,}".format(data.total.min_plat).replace(",", " ") }} — {{ "{:,}".format(data.total.max_plat).replace(",", " ") }} Kc</div>
+        <div class="label">Rozpeti (min — max)</div>
+    </div>
+    <div class="stat-card orange" style="text-align:center;">
+        <div class="number">{{ data.bez_platu }}</div>
+        <div class="label">Pozic BEZ platu</div>
+    </div>
+</div>
+{% else %}
+<div class="card" style="text-align:center; padding:40px;">
+    <p class="text-muted">Zadne pozice s platem pro tento filtr.</p>
+</div>
+{% endif %}
+
+<div class="grid-2">
+    <!-- Per region -->
+    {% if data.region_stats %}
+    <div class="card">
+        <h2>Prumerny plat dle regionu</h2>
+        {% set max_plat = data.region_stats[0].avg_stred if data.region_stats else 1 %}
+        <div class="bar-chart">
+            {% for rs in data.region_stats %}
+            <div class="bar-row">
+                <div class="bar-label">{{ rs.kraj }}</div>
+                <div class="bar-bg">
+                    <div class="bar-fill" style="width: {{ (rs.avg_stred / max_plat * 100)|int }}%; background: linear-gradient(90deg, #6366f1, #818cf8);">
+                        {{ "{:,}".format(rs.avg_stred).replace(",", " ") }}
+                    </div>
+                </div>
+                <div class="bar-value">
+                    {{ "{:,}".format(rs.avg_od).replace(",", " ") }} — {{ "{:,}".format(rs.avg_do).replace(",", " ") }} Kc
+                    <br><span class="text-muted">({{ rs.pocet }} pozic)</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Per position keyword -->
+    {% if data.position_groups %}
+    <div class="card">
+        <h2>Prumerny plat dle typu pozice</h2>
+        {% set max_pg = data.position_groups[0].avg_do if data.position_groups else 1 %}
+        <div style="overflow-x:auto;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Pozice (klicove slovo)</th>
+                    <th>Pocet</th>
+                    <th>Prumer od—do</th>
+                    <th>Median od—do</th>
+                    <th>Min</th>
+                    <th>Max</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for pg in data.position_groups %}
+                <tr>
+                    <td>
+                        <a href="/benchmark?keyword={{ pg.keyword }}&kraj={{ kraj }}" style="font-weight:600;">
+                            {{ pg.keyword }}
+                        </a>
+                    </td>
+                    <td>{{ pg.count }}</td>
+                    <td>
+                        <span class="salary-range">
+                            {{ "{:,}".format(pg.avg_od).replace(",", " ") }} — {{ "{:,}".format(pg.avg_do).replace(",", " ") }}
+                        </span>
+                    </td>
+                    <td>{{ "{:,}".format(pg.median_od).replace(",", " ") }} — {{ "{:,}".format(pg.median_do).replace(",", " ") }}</td>
+                    <td class="text-muted">{{ "{:,}".format(pg.min_plat).replace(",", " ") }}</td>
+                    <td class="text-muted">{{ "{:,}".format(pg.max_plat).replace(",", " ") }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Top salary positions -->
+{% if data.top_salary %}
+<div class="card">
+    <h2>Top 20 nejlepe placenych pozic{% if kraj %} v {{ kraj }}{% endif %}{% if keyword %} ({{ keyword }}){% endif %}</h2>
+    <div style="overflow-x:auto;">
+    <table>
+        <thead>
+            <tr>
+                <th>Firma</th>
+                <th>Pozice</th>
+                <th>Kraj</th>
+                <th>Plat</th>
+                <th>Stred</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in data.top_salary %}
+            <tr>
+                <td>
+                    <a class="firma-link" href="/firma/{{ p.firma|normalize }}">
+                        <strong>{{ p.firma }}</strong>
+                    </a>
+                </td>
+                <td>{{ p.pozice }}</td>
+                <td style="font-size:0.85em;">{{ p.kraj }}</td>
+                <td><span class="salary-range">{{ p.plat_text }}</span></td>
+                <td style="font-weight:600;">{{ "{:,}".format(p.plat_stred).replace(",", " ") }} Kc</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+
+<div style="margin-top:16px; display:flex; gap:8px;">
+    <a href="/" class="btn btn-outline btn-sm">Dashboard</a>
+    <a href="/analytics" class="btn btn-outline btn-sm">Export pro Looker</a>
+</div>
+{% endblock %}
