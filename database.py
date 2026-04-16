@@ -2598,6 +2598,8 @@ def _extract_skill_combo(title: str) -> str:
 
     if len(found) >= 2:
         return "kombinace {} a {}".format(found[0][0], found[1][0])
+    if len(found) == 1:
+        return found[0][0]  # single skill is enough
     return ""
 
 
@@ -2642,12 +2644,15 @@ def _shorten_role(raw: str) -> str:
     """
     s = _naturalize_role(raw, "")
 
+    # Strip emojis and other non-text characters
+    s = re.sub(r'[^\w\s/|_*+\-–—.,;:()&]', '', s, flags=re.UNICODE).strip()
+
     # Strip seniority prefixes (keep the core role)
     s = re.sub(r'^(?:senior|junior|lead|hlavní|zkušený|experienced)\s+',
                '', s, flags=re.IGNORECASE)
 
-    # Strip gender-inclusive markers: *kyně, *ka, /ka, /kyně
-    s = re.sub(r'[*/](?:kyně|ka|ky)\b', '', s)
+    # Strip gender-inclusive markers: *kyně, *ka, /ka, /á, etc.
+    s = re.sub(r'[*/](?:kyně|ka|ky|á|é)\b', '', s)
 
     # Strip trailing " | " segments first (so seniority at end becomes visible)
     s = re.sub(r'\s*\|.*$', '', s)
@@ -2840,23 +2845,29 @@ def _missile_message_aktualizovano(dm_contact: dict, pozice_title: str,
     city = _clean_misto(misto)
     loc_phrase = _misto_locative(city) if city else ""
 
-    # Combo sentence — with optional location
-    if combo and loc_phrase:
-        combo_sent = ("Zrovna teď řeším stejný typ role jinde a vím, "
-                      "že {} {} bývá dost často oříšek.".format(combo, loc_phrase))
-    elif combo:
-        combo_sent = ("Zrovna teď řeším stejný typ role jinde a vím, "
-                      "že {} bývá dost často oříšek.".format(combo))
-    elif loc_phrase:
-        combo_sent = ("Zrovna teď řeším stejný typ role jinde a vím, "
-                      "že obsadit podobnou pozici {} bývá dost často oříšek.".format(loc_phrase))
+    # Combo sentence — skip entirely if no skill found
+    if not combo:
+        combo_sent = ""  # no skill info → skip the sentence
+    elif combo.startswith("kombinace"):
+        # 2 skills: "kombinace PLC a angličtiny"
+        if loc_phrase:
+            combo_sent = (" Zrovna teď řeším stejný typ role jinde a vím, "
+                          "že {} {} může být oříšek.".format(combo, loc_phrase))
+        else:
+            combo_sent = (" Zrovna teď řeším stejný typ role jinde a vím, "
+                          "že {} může být oříšek.".format(combo))
     else:
-        combo_sent = ("Zrovna teď řeším stejný typ role jinde a vím, "
-                      "že podobně postavené role bývají dost často oříšek.")
+        # Single skill (genitive form) — wrap so grammar works
+        if loc_phrase:
+            combo_sent = (" Zrovna teď řeším stejný typ role jinde a vím, "
+                          "že sehnat lidi se znalostí {} {} může být oříšek.".format(combo, loc_phrase))
+        else:
+            combo_sent = (" Zrovna teď řeším stejný typ role jinde a vím, "
+                          "že sehnat lidi se znalostí {} může být oříšek.".format(combo))
 
     msg = (
         "{osloveni}, náhodou jsem narazila na pozici {role}, "
-        "kterou u vás {prep} {firma} znovu aktualizovali. "
+        "kterou u vás {prep} {firma} znovu aktualizovali."
         "{combo} "
         "Kdyby Vám to stálo za to, můžu Vám ukázat, co se v takové chvíli "
         "dá udělat, aby se to s náborem zbytečně netáhlo."
@@ -2980,6 +2991,10 @@ def _extract_skill_combo_deep(title: str, description: str) -> str:
 
     if best_pair:
         return "kombinace {} a {}".format(best_pair[0], best_pair[1])
+
+    # Single skill from description is fine too
+    if found:
+        return found[0][0]
 
     return _extract_skill_combo(title)
 
