@@ -31,10 +31,7 @@
     .dm-text-wrap { padding: 16px 20px; background: #f8f7ff; }
     .dm-text { white-space: pre-wrap; font-size: 0.88em; line-height: 1.65;
                color: #1e1b4b; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
-    .dm-text.hidden { display: none; }
     .dm-char-count { font-size: 0.75em; color: #888; margin-top: 8px; text-align: right; }
-    .dm-char-count.over { color: #dc2626; font-weight: 600; }
-    .dm-char-count.hidden { display: none; }
 
     .dm-actions { padding: 12px 20px 16px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 
@@ -46,17 +43,6 @@
     .legend-dot { width: 12px; height: 12px; border-radius: 50%; }
 
     .copy-ok { color: #16a34a; font-weight: 600; font-size: 0.82em; display: none; }
-
-    /* CTA toggle */
-    .cta-toggle { display: inline-flex; border: 2px solid #6366f1; border-radius: 8px;
-                  overflow: hidden; margin-left: 12px; }
-    .cta-toggle button { border: none; padding: 5px 16px; font-size: 0.82em;
-                         font-weight: 600; cursor: pointer; background: #fff;
-                         color: #6366f1; transition: all 0.15s; }
-    .cta-toggle button.active { background: #6366f1; color: #fff; }
-    .cta-toggle button:hover:not(.active) { background: #f0efff; }
-
-    .cta-info { font-size: 0.75em; color: #888; margin-left: 8px; }
 </style>
 {% endblock %}
 
@@ -64,42 +50,27 @@
 <div class="missile-header">
     <h1>MISSILE DM Generator <span class="count-badge">{{ dms|length }}</span></h1>
     <div class="sub">
-        Personalizovane LinkedIn zpravy podle signalu. Zkopiruj — otevri LinkedIn — posli.
-        <br>Podpis: Sarka, Sintera | Max 300 znaku | Bez zakazanych slov
+        3-dily: FAKT o nich, INTERPRETACE co to znamena, MICRO-STEP (poslete cislo).
+        <br>Podpis: Sarka | Max 4 vety | Bez zakazanych slov
     </div>
-</div>
-
-<!-- CTA polarity toggle -->
-<div style="margin-bottom: 20px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px;">
-    <strong style="font-size: 0.9em;">Styl CTA:</strong>
-    <div class="cta-toggle">
-        <button id="toggle-direct" class="active" onclick="setCTA('direct')">DIRECT</button>
-        <button id="toggle-soft" onclick="setCTA('soft')">SOFT</button>
-    </div>
-    <span class="cta-info" id="cta-info">
-        Reamer/Berman — "Poslete cislo, reknu rovnou..."
-    </span>
 </div>
 
 <!-- Legend -->
 <div class="legend">
     <div class="legend-item">
-        <span class="legend-dot" style="background:#dc2626;"></span> Obnoveny inzerat (A2)
+        <span class="legend-dot" style="background:#dc2626;"></span> P1: Regionalni konkurence
     </div>
     <div class="legend-item">
-        <span class="legend-dot" style="background:#7c3aed;"></span> Opakovane zadano (A3)
+        <span class="legend-dot" style="background:#7c3aed;"></span> P2: Vzacna kombinace
     </div>
     <div class="legend-item">
-        <span class="legend-dot" style="background:#ea580c;"></span> Dlouho otevrena (A1)
+        <span class="legend-dot" style="background:#2563eb;"></span> P3: Buduje tym
     </div>
     <div class="legend-item">
-        <span class="legend-dot" style="background:#2563eb;"></span> Buduje tym (D)
+        <span class="legend-dot" style="background:#d97706;"></span> P4: Chybi plat
     </div>
     <div class="legend-item">
-        <span class="legend-dot" style="background:#d97706;"></span> Bez platu (E)
-    </div>
-    <div class="legend-item">
-        <span class="legend-dot" style="background:#64748b;"></span> Aktivni nabor (F)
+        <span class="legend-dot" style="background:#ea580c;"></span> P5: Dlouho otevrena
     </div>
 </div>
 
@@ -127,8 +98,8 @@
 
 {% if not dms %}
 <div class="card" style="text-align:center; padding:40px;">
-    <p class="text-muted">Zadne DM ke generovani — bud jsou vsechny firmy osloveny,
-       nebo nejsou shody s decision makers.</p>
+    <p class="text-muted">Zadne DM ke generovani — bud nejsou dostatecne signaly,
+       nebo jsou vsechny firmy osloveny.</p>
     <p class="text-muted" style="margin-top:8px;">
         Zkontrolujte <a href="/radar" style="color:#6366f1;">Radar</a> nebo
         <a href="/decision-makers" style="color:#6366f1;">nahrajte Decision Makers</a>.
@@ -149,10 +120,10 @@
                 | {{ dm.pocet_pozic }} pozic | {{ dm.kraj }}
             </div>
             <div class="dm-signal">
-                <span class="signal signal-{% if 'neobsaz' in dm.signal %}red{% elif 'Dlouho' in dm.signal %}orange{% elif 'Rozšiř' in dm.signal %}blue{% else %}green{% endif %}">
-                    {{ dm.signal }}
+                <span class="signal signal-{% if dm.priority == 1 %}red{% elif dm.priority == 3 %}blue{% elif dm.priority == 4 %}orange{% elif dm.priority == 5 %}orange{% else %}green{% endif %}">
+                    {{ dm.archetype_label }}
                 </span>
-                | Ref. pozice: <strong>{{ dm.pozice_ref }}</strong>
+                | Ref: <strong>{{ dm.pozice_ref }}</strong>
             </div>
         </div>
         <div style="text-align: right;">
@@ -163,13 +134,9 @@
     </div>
 
     <div class="dm-text-wrap">
-        <div class="dm-text dm-text-direct" id="text-direct-{{ loop.index }}">{{ dm.zprava }}</div>
-        <div class="dm-text dm-text-soft hidden" id="text-soft-{{ loop.index }}">{{ dm.zprava_soft }}</div>
-        <div class="dm-char-count dm-cc-direct {% if dm.char_count > 300 %}over{% endif %}">
-            {{ dm.char_count }} znaku {% if dm.char_count > 300 %}(prekrocen limit 300!){% endif %}
-        </div>
-        <div class="dm-char-count dm-cc-soft hidden {% if dm.char_count_soft > 300 %}over{% endif %}">
-            {{ dm.char_count_soft }} znaku {% if dm.char_count_soft > 300 %}(prekrocen limit 300!){% endif %}
+        <div class="dm-text" id="text-{{ loop.index }}">{{ dm.zprava }}</div>
+        <div class="dm-char-count">
+            {{ dm.char_count }} znaku
         </div>
     </div>
 
@@ -195,7 +162,7 @@
 {% if dms %}
 <div style="margin-top:16px; display:flex; gap:8px;">
     <a href="/" class="btn btn-outline btn-sm">Dashboard</a>
-    <a href="/batch" class="btn btn-outline btn-sm">Batch zpravy (stary styl)</a>
+    <a href="/batch" class="btn btn-outline btn-sm">Batch zpravy</a>
     <a href="/outreach" class="btn btn-outline btn-sm">Outreach CRM</a>
 </div>
 {% endif %}
@@ -203,38 +170,8 @@
 
 {% block scripts %}
 <script>
-var currentCTA = 'direct';
-
-function setCTA(style) {
-    currentCTA = style;
-    // Toggle buttons
-    document.getElementById('toggle-direct').classList.toggle('active', style === 'direct');
-    document.getElementById('toggle-soft').classList.toggle('active', style === 'soft');
-    // Update info text
-    var info = document.getElementById('cta-info');
-    if (style === 'direct') {
-        info.textContent = 'Reamer/Berman — "Poslete cislo, reknu rovnou..."';
-    } else {
-        info.textContent = 'Braun/Allred — "Mam k tomu jednu poznamku. Chcete ji sem...?"';
-    }
-    // Toggle all message texts
-    document.querySelectorAll('.dm-text-direct').forEach(function(el) {
-        el.classList.toggle('hidden', style !== 'direct');
-    });
-    document.querySelectorAll('.dm-text-soft').forEach(function(el) {
-        el.classList.toggle('hidden', style !== 'soft');
-    });
-    document.querySelectorAll('.dm-cc-direct').forEach(function(el) {
-        el.classList.toggle('hidden', style !== 'direct');
-    });
-    document.querySelectorAll('.dm-cc-soft').forEach(function(el) {
-        el.classList.toggle('hidden', style !== 'soft');
-    });
-}
-
 function copyDM(idx) {
-    var textId = 'text-' + currentCTA + '-' + idx;
-    var text = document.getElementById(textId).innerText;
+    var text = document.getElementById('text-' + idx).innerText;
     navigator.clipboard.writeText(text).then(function() {
         var ok = document.getElementById('copy-ok-' + idx);
         ok.style.display = 'inline';

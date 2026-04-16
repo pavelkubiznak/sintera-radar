@@ -1705,36 +1705,243 @@ def generate_batch_messages(recommendations: list, template: str = "") -> list:
     return messages
 
 
-# ── MISSILE: Cold LinkedIn DM Generator ──────────────────────────────────────
+# ── MISSILE v4: Cold LinkedIn DM Generator ─────────────────────────────────
 #
-# Framework: Braun / Reamer / Holland / Allred / Mowinski synthesis
+# 3-part structure:  FACT → INTERPRETATION → MICRO-STEP
 #
-# Struktura zprávy:
-#   1. Fakt — konkrétní, měřitelný, nepopiratelný. Dokazuje, že nepíšeme naslepo.
-#   2. Interpretace fáze trhu — NE reportáž ("vidím, že hledáte"), ALE diagnóza
-#      ("v téhle fázi bývá aktivní trh vyčerpaný"). Říkáme, co to ZNAMENÁ.
-#   3. Malý next step — snížit tření odpovědi na minimum.
+# Priority system (strongest signal wins):
+#   1. Regional competitive pressure (4+ firms, same role cluster, same region)
+#   2. Rare skill combination (3+ uncommon requirements in title)
+#   3. Hiring wave (5+ positions at once)
+#   4. Missing salary when competitors show it
+#   5. Long-running role (6+ weeks)
+#   → INSUFFICIENT_DATA if none apply → skip, don't generate
 #
-# Dvě CTA polarity:
-#   DIRECT (Reamer/Berman): "Pošlete číslo, řeknu během 2 minut, jestli bych
-#     to ještě čekal, nebo měnil postup."
-#   SOFT (Braun/Allred): "Mám k tomu jednu stručnou poznámku. Chcete ji sem,
-#     nebo je rychlejší telefon?"
-#
-# Pravidla:
-#   - Žádný "Dobrý den", žádné představování, žádný název firmy
-#   - Podpis jen "Šárka"
-#   - Zakázaná slova: nabídka, klient, recruitment, agentura, headhunter,
-#     outsourcing, pomoc, analýza, audit
-#   - Nepsat o roli. Psát o fázi trhu.
-#   - Max 300 znaků
-#   - Cíl: příjemce si řekne "jak to ví?" — a odpoví.
+# Rules:
+#   - Opening: "Pane {VOCATIVE}," / "Paní {SURNAME}," — immediately the fact
+#   - Signature: just "Šárka" on a new line
+#   - Role names naturalized (no gender markers, no DB artifacts)
+#   - Czech declension: proper case for role names in sentences
+#   - BANNED: nabídka, klient, recruitment, agentura, headhunter, outsourcing,
+#     pomoc, analýza, audit, vidím/všimla/zachytila, služba, spolupráce, konzultace,
+#     kandidáti/síť kandidátů, Sintera, Dobrý den, Direct Search
+#   - 3–4 sentences max.  Goal: "jak to ví?" → reply.
 
-_MISSILE_PRIORITY = {"A2": 6, "A3": 5, "A1": 4, "D": 3, "E": 2, "F": 1}
 
+# ── Role naturalization ───────────────────────────────────────────
+
+_GENDER_RE = re.compile(
+    r'(?:\s*/\s*(?:t)?ka\b|\s*\*\s*ka\b|\s*/\s*[čc]ka\b'
+    r'|\s*/\s*pracovnice\b'
+    r'|\s*\(m/[žz](?:/n)?\))',
+    re.IGNORECASE,
+)
+_SALARY_FRAG_RE = re.compile(
+    r'\s*[-–—]\s*(?:až|od|do)?\s*\d[\d\s]*(?:Kč|CZK|EUR)\b.*$',
+    re.IGNORECASE,
+)
+_CITIES = [
+    'Praha', 'Brno', 'Ostrava', 'Plzeň', 'Olomouc', 'Liberec',
+    'České Budějovice', 'Hradec Králové', 'Karlovy Vary', 'Zlín',
+    'Pardubice', 'Jihlava', 'Ústí nad Labem', 'Opava', 'Most',
+    'Frýdek-Místek', 'Karviná', 'Chomutov', 'Děčín', 'Teplice',
+    'Kladno', 'Mladá Boleslav', 'Beroun', 'Kolín',
+]
+
+
+def _naturalize_role(raw: str, region: str = "") -> str:
+    """Raw job board title → natural conversational nominative form.
+
+    'Obchodní manažer/ka – technický facility management (m/ž)'
+    → 'obchodní manažer pro facility management'
+    """
+    s = raw.strip()
+    # 1. Gender markers
+    s = _GENDER_RE.sub('', s)
+    # 1b. Full feminine alternative: "operátor/operátorka", "Specialista/Specialistka"
+    def _keep_masc(match):
+        w1, w2 = match.group(1), match.group(2)
+        prefix = 0
+        for a, b in zip(w1.lower(), w2.lower()):
+            if a == b:
+                prefix += 1
+            else:
+                break
+        return w1 if prefix >= 3 else match.group(0)
+    s = re.sub(r'(\w{4,})/(\w{4,})\b', _keep_masc, s)
+    # 2. Salary fragments
+    s = _SALARY_FRAG_RE.sub('', s)
+    # 3. Location redundancy
+    if region:
+        s = re.sub(r'\b' + re.escape(region) + r'\b', '', s, flags=re.IGNORECASE)
+    for city in _CITIES:
+        s = re.sub(r'(?<!\w)' + re.escape(city) + r'(?!\w)', '', s,
+                   flags=re.IGNORECASE)
+    # 4. Internal codes + parenthetical junk + marketing phrases
+    s = re.sub(r'\b(?:Req|ID|Ref)[-\s]*\d[\d-]*\b', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'\s*\([^)]{5,}\)', '', s)  # strip long parentheticals
+    s = re.sub(r'\s+v\s+srdci\s+.*$', '', s, flags=re.IGNORECASE)  # "v srdci..."
+    s = re.sub(r'\s+[-–—]\s+přidej\s+se\s.*$', '', s, flags=re.IGNORECASE)
+    # 5. Separator → "pro" (en-dash, em-dash, or spaced hyphen)
+    s = re.sub(r'\s*[–—]\s*', ' pro ', s, count=1)
+    s = re.sub(r'\s+-\s+', ' pro ', s, count=1)
+    s = re.sub(r'\bpro\s+pro\b', 'pro', s)
+    # 6. Trailing junk
+    s = re.sub(r'\s*-\s*$', '', s)
+    s = re.sub(r'^\s*-\s*', '', s)
+    s = re.sub(r'\s{2,}', ' ', s).strip()
+    # 7. Lowercase
+    #   - ALL CAPS words >4 chars → full lowercase (shouted regular words)
+    #   - ALL CAPS 2-4 chars → keep (acronyms: IT, PLC, SAP)
+    #   - Mixed case → lowercase first letter only (preserve brand casing)
+    words = s.split()
+    out = []
+    for w in words:
+        core = w.strip('(),;:.')
+        if core.isupper() and len(core) >= 2 and core.isalpha():
+            if len(core) <= 4:
+                out.append(w)                     # IT, PLC, SAP — keep
+            else:
+                out.append(w.lower())             # PROGRAMÁTOR → programátor
+        else:
+            out.append(w[0].lower() + w[1:] if w else w)
+    s = ' '.join(out)
+    # 8. Trim trailing punctuation
+    s = s.strip().rstrip('.,;:–—- ')
+    return s
+
+
+# ── Czech declension (accusative / genitive) ─────────────────────
+
+_NO_DECLINE = frozenset([
+    'senior', 'junior', 'lead', 'chief', 'head', 'data', 'full', 'front',
+    'back', 'end', 'stack', 'product', 'project', 'quality', 'business',
+    'account', 'key', 'site', 'facility', 'management', 'field', 'service',
+    'banking', 'development', 'delivery', 'support', 'sales', 'marketing',
+    'pro', 'na', 'v', 've', 'a', 'se',
+])
+
+
+def _decline_word_acc(word: str) -> str:
+    """Best-effort accusative/genitive of a single Czech word.
+    Returns the word unchanged if declension is uncertain."""
+    if not word or len(word) < 3:
+        return word
+    low = word.lower()
+    if low in _NO_DECLINE:
+        return word
+    if word.isupper() and word.isalpha():
+        return word  # acronym
+
+    # -- DON'T decline: verbal nouns, neuter nouns, foreign words --
+    # Verbal nouns: -ování, -ávání, -ení, -ání, -utí
+    if re.search(r'(?:ování|ávání|ení|ání|utí|ství|ctví)$', low):
+        return word
+    # Known neuter/indeclinable patterns
+    if low.endswith("um") or low.endswith("io"):  # centrum, studio
+        return word
+
+    # -- Adjectives --
+    # -ní (procesní, stavební) → -ního
+    if low.endswith("ní") and not low.endswith("ání") and not low.endswith("ení"):
+        return word + "ho"
+    if low.endswith("cí") or low.endswith("čí"):
+        return word + "ho"
+    if low.endswith("í"):
+        return word[:-1] + "ího"
+    if low.endswith("ý"):
+        return word[:-1] + "ého"
+
+    # -- Masculine animate nouns --
+    if low.endswith("ista"):
+        return word[:-1] + "u"         # specialista → specialistu
+    if low.endswith("ce"):
+        return word                     # správce stays (soft paradigm)
+    for suf in ("ér", "er", "ýr", "or", "ór", "ik", "ík", "ant", "ent",
+                "ekt", "ect", "át", "ot"):
+        if low.endswith(suf):
+            return word + "a"
+    if low.endswith("tel"):
+        return word + "e"               # ředitel → ředitele
+    if low.endswith("eč"):
+        return word + "e"               # svářeč → svářeče
+    if low.endswith("éř") or low.endswith("ář"):
+        return word + "e"               # bankéř → bankéře, elektrikář → elektrikáře
+
+    # Default: DON'T guess — return unchanged
+    return word
+
+
+def _decline_role_acc(role_nom: str) -> str:
+    """Decline full role name to accusative/genitive.
+
+    'procesní inženýr' → 'procesního inženýra'
+    'IT analytik pro bankovnictví' → 'IT analytika pro bankovnictví'
+    'specialista výzkumu a inovací' → 'specialistu výzkumu a inovací'
+
+    Only the first 1-2 words (adjective + main noun) are declined.
+    Everything after: prepositions, genitives, descriptors — stays unchanged.
+    """
+    # Split at preposition
+    parts = re.split(r'(\s+(?:pro|na|v|ve|se|s)\s+)', role_nom, maxsplit=1)
+    core = parts[0]
+    rest = ''.join(parts[1:]) if len(parts) > 1 else ''
+
+    words = core.split()
+    if not words:
+        return role_nom
+
+    # Find the main noun position: skip modifiers like "senior", acronyms
+    _SKIP = {'senior', 'junior', 'lead', 'head', 'chief', 'key'}
+    declined = []
+    noun_found = False
+    for i, w in enumerate(words):
+        wl = w.lower().strip('(),')
+        if not noun_found:
+            if wl in _SKIP or (w.isupper() and w.isalpha() and len(w) <= 4):
+                # Modifier or acronym — keep, don't decline
+                declined.append(w)
+            else:
+                # This is the (adjective or) noun — decline it
+                declined.append(_decline_word_acc(w))
+                # Check if NEXT word is the actual noun (this was an adjective)
+                if i + 1 < len(words) and wl.endswith(("ní", "cí", "čí", "ý", "í")):
+                    continue  # adjective — noun is next
+                noun_found = True
+        else:
+            # After main noun — don't decline further
+            declined.append(w)
+    return ' '.join(declined) + rest
+
+
+# ── Czech vocative ────────────────────────────────────────────────
+
+def _vocative_male(surname: str) -> str:
+    """Best-effort Czech vocative of a male surname.
+    Novák → Nováku, Jireček → Jirečku, Koudelka → Koudelko.
+    Adjectival -ský/-cký stay unchanged."""
+    s = surname.strip()
+    low = s.lower()
+    if (low.endswith("ský") or low.endswith("cký") or
+            low.endswith("ný") or low.endswith("ý")):
+        return s
+    if low.endswith("ek"):
+        return s[:-2] + "ku"
+    if low.endswith("ák"):
+        return s + "u"
+    if low.endswith("ík"):
+        return s + "u"
+    if low.endswith("ec"):
+        return s[:-2] + "če"
+    if low.endswith("a") and not low.endswith("ová"):
+        return s[:-1] + "o"
+    return s                             # fallback: nominative
+
+
+# ── Gender detection + oslovení ───────────────────────────────────
 
 def _gender_osloveni(dm: dict) -> str:
-    """'paní Nováková' / 'pane Novák'. Handles accented + unaccented Czech."""
+    """'Paní Nováková' / 'Pane Nováku'. Czech gender with vocative for males."""
     last = dm.get("last_name", "").strip()
     first = dm.get("first_name", "").strip()
     if not last or len(last) <= 1:
@@ -1746,34 +1953,30 @@ def _gender_osloveni(dm: dict) -> str:
             return full
         else:
             return ""
-    # Strip trailing titles: ", MBA", ", DiS.", " PhD" etc.
-    clean = re.sub(r'[,\s]+(MBA|PhD|CSc|Ing|Mgr|Bc|DiS|Dr|Ph\.?D\.?)\s*\.?\s*$',
-                   '', last, flags=re.IGNORECASE).strip()
-    clean = clean.rstrip(',').strip()
+    # Strip trailing titles: ", MBA", etc.
+    clean = re.sub(
+        r'[,\s]+(MBA|PhD|CSc|Ing|Mgr|Bc|DiS|Dr|Ph\.?D\.?)\s*\.?\s*$',
+        '', last, flags=re.IGNORECASE).strip().rstrip(',').strip()
     if not clean or len(clean) <= 1:
         return dm.get("full_name", "").strip()
-    # Normalize case: if all-lower or all-upper, title-case it
     if clean.islower() or clean.isupper():
         clean = clean.title()
     low = clean.lower()
-    # Czech female surname patterns (accented + unaccented):
-    #   -ová/-ova (Nováková, Bukovova)
-    #   -ská/-ska (Bukovská/Bukovska, Černohorská/Cernohorska)
-    #   -cká/-cka (Kopecká)
-    #   -á (Krátká, Dlouhá) — only accented, bare -a is too ambiguous
+    # Female surname patterns
     if (low.endswith("ová") or low.endswith("ova")
             or low.endswith("ská") or low.endswith("ska")
             or low.endswith("cká") or low.endswith("cka")
             or (low.endswith("á") and len(clean) > 2)):
-        return "paní {}".format(clean)
-    # Fallback: Czech female first names almost always end in -a or -e/-ie
-    # Male names end in consonant, -o, -ek, -ík, -oslav, etc.
+        return "Paní {}".format(clean)
+    # Fallback: female first name
     if first:
         fl = first.lower().rstrip('.')
         if fl.endswith("a") or fl.endswith("ie") or fl.endswith("na"):
-            return "paní {}".format(clean)
-    return "pane {}".format(clean)
+            return "Paní {}".format(clean)
+    return "Pane {}".format(_vocative_male(clean))
 
+
+# ── Days computation ──────────────────────────────────────────────
 
 def _compute_dni(p: dict) -> int:
     """Days active for a position."""
@@ -1787,265 +1990,449 @@ def _compute_dni(p: dict) -> int:
         return 0
 
 
-def _missile_archetype(firma_data: dict) -> tuple:
-    """Best MISSILE archetype for a company.
-    Returns (code, reference_position, extra_data).
-    extra_data always includes computed metrics for the message generator.
+# ── Role clustering ───────────────────────────────────────────────
+
+_ROLE_KW_ORDER = [
+    # longer / more specific first
+    'obchodní zástupce', 'obchodní manažer', 'obchodní konzultant',
+    'key account', 'account manager', 'sales manager',
+    'projektový manažer', 'project manager', 'product manager',
+    'procesní inženýr', 'stavební technik', 'servisní technik',
+    'finanční účetní', 'vedoucí směny', 'vedoucí oddělení',
+    'vedoucí výroby', 'kontrolor kvality', 'operátor výroby',
+    'technik údržby', 'sociální pracovník', 'zdravotní sestra',
+    'business development', 'IT specialista', 'HR specialista',
+    'data analyst', 'data engineer', 'data scientist',
+    'full stack', 'front end', 'back end',
+    # single-word nouns
+    'inženýr', 'manažer', 'technik', 'analytik', 'programátor',
+    'operátor', 'projektant', 'konzultant', 'specialista',
+    'koordinátor', 'developer', 'tester', 'architekt', 'konstruktér',
+    'ředitel', 'asistent', 'účetní', 'vedoucí', 'správce',
+    'administrátor', 'designer', 'mechanik', 'elektrikář',
+    'svářeč', 'řidič', 'skladník', 'nákupčí', 'ekonom',
+    'referent', 'scientist', 'engineer', 'manager', 'analyst',
+    'controller', 'obchodník', 'prodejce', 'fyzioterapeut',
+    'stavbyvedoucí',
+]
+
+
+def _extract_role_cluster(title: str) -> str:
+    """Extract role cluster key for regional competition grouping."""
+    t = title.lower()
+    t = re.sub(r'[/\*]\s*ka\b', '', t)
+    t = re.sub(r'\(m/[žz](?:/n)?\)', '', t)
+    for kw in _ROLE_KW_ORDER:
+        if kw in t:
+            return kw
+    words = t.split()
+    skip = {'senior', 'junior', 'lead', 'hlavní', 'samostatný'}
+    for w in words:
+        if w not in skip and len(w) > 3:
+            return w
+    return ""
+
+
+# ── Region locative ──────────────────────────────────────────────
+
+def _region_locative(region: str) -> str:
+    """'Jihomoravský kraj' → 'Jihomoravském kraji' (for 'v …')."""
+    r = region.strip()
+    _MAP = {
+        'Praha': 'Praze',
+        'Celá ČR': 'Česku',
+        'Kraj Vysočina': 'kraji Vysočina',
+    }
+    if r in _MAP:
+        return _MAP[r]
+    if r.endswith('ský kraj'):
+        return r[:-8] + 'ském kraji'
+    if r.endswith('cký kraj'):
+        return r[:-8] + 'ckém kraji'
+    # bare adjective without "kraj"
+    if r.endswith('ský'):
+        return r[:-3] + 'ském kraji'
+    if r.endswith('cký'):
+        return r[:-3] + 'ckém kraji'
+    return 'regionu ' + r
+
+
+# ── Number words ─────────────────────────────────────────────────
+
+_CZ_NUMS = {
+    2: 'dvě', 3: 'tři', 4: 'čtyři', 5: 'pět', 6: 'šest', 7: 'sedm',
+    8: 'osm', 9: 'devět', 10: 'deset', 11: 'jedenáct', 12: 'dvanáct',
+}
+
+
+def _num_cz(n: int) -> str:
+    return _CZ_NUMS.get(n, str(n))
+
+
+# ── Firma shortening ─────────────────────────────────────────────
+
+def _shorten_firma(firma: str) -> str:
+    """Strip legal suffixes for natural DM use."""
+    s = firma.strip()
+    s = re.sub(
+        r',?\s*(?:s\.r\.o\.|a\.s\.|a\.\s*s\.|SE|GmbH|AG|Ltd\.?|Inc\.?'
+        r'|spol\.\s*s\s*r\.?o\.?|v\.o\.s\.)\s*$',
+        '', s, flags=re.IGNORECASE,
+    )
+    return s.strip().rstrip(',').strip()
+
+
+# ── Pre-compute competitive context ──────────────────────────────
+
+def _missile_context() -> dict:
+    """Pre-compute regional competition + salary transparency data.
+    Called once per generate_missile_dms() invocation.
+    Returns {'competition': {(kraj, cluster): set_of_firms},
+             'salary': {(kraj, cluster): (total, with_salary)} }.
     """
-    pozice = firma_data.get("pozice", [])
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT firma, kraj, pozice, plat_od "
+            "FROM nabidky WHERE aktivni = 1 AND is_agency = 0"
+        ).fetchall()
+
+    competition = {}      # (kraj, cluster) → set of firma (lowercased)
+    salary = {}           # (kraj, cluster) → [total, with_salary]
+
+    for r in rows:
+        cl = _extract_role_cluster(r["pozice"])
+        if not cl:
+            continue
+        key = (r["kraj"], cl)
+        # competition
+        if key not in competition:
+            competition[key] = set()
+        competition[key].add(r["firma"].lower().strip())
+        # salary
+        if key not in salary:
+            salary[key] = [0, 0]
+        salary[key][0] += 1
+        if r["plat_od"] and r["plat_od"] > 0:
+            salary[key][1] += 1
+
+    return {"competition": competition, "salary": salary}
+
+
+# ── Priority determination ────────────────────────────────────────
+
+_P2_LANG = re.compile(
+    r'\b(?:angli[čc]|n[ěe]m[čc]|fran[čc]|english|german|french)\b', re.I)
+_P2_TECH = re.compile(
+    r'\b(?:SAP|Siemens|PLC|CNC|CAD|AutoCAD|Python|Java|\.NET'
+    r'|C\+\+|SQL|AWS|Azure|Kubernetes|Docker|React|Angular'
+    r'|Salesforce|Oracle|ABAP|S7|TIA)\b', re.I)
+_P2_DOMAIN = re.compile(
+    r'\b(?:automotive|pharma|energetik|strojírenstv|elektro'
+    r'|bankovnictv|pojišťovnictv|logistik|chemick)\b', re.I)
+_P2_SENIOR = re.compile(
+    r'\b(?:senior|lead|vedoucí|head\s+of|ředitel|principal)\b', re.I)
+
+# Generic clusters that don't make good P1 signals on their own
+_P1_GENERIC = frozenset([
+    'specialista', 'manažer', 'technik', 'vedoucí', 'asistent',
+    'referent', 'koordinátor', 'konzultant', 'manager', 'engineer',
+    'analyst', 'obchodní zástupce', 'obchodní manažer',
+])
+
+
+def _missile_priority(m: dict, ctx: dict, kraj_filter: str) -> tuple:
+    """Determine strongest signal for a company.
+    Returns (priority_int, signal_text, extra_dict).
+    priority=0 means INSUFFICIENT_DATA → skip.
+
+    Priority evaluation order follows spec (1→5), but each priority
+    has strict activation criteria so not every company triggers P1.
+    """
+    pozice = m.get("pozice", [])
     if not pozice:
-        return ("F", None, {})
+        return (0, "", {})
 
-    # Pre-compute metrics for all positions
+    firma_low = m["firma"].lower().strip()
     total_pozic = len(pozice)
-    max_scanu = max(p.get("pocet_scanu", 1) for p in pozice)
+    competition = ctx["competition"]
+    salary = ctx["salary"]
 
-    # A2 — Republished (aktualizovano)
+    # ── Priority 1: Regional competitive pressure ──────────────────
+    # Strict criteria:
+    #   - Specific region only (not "Celá ČR")
+    #   - 2-word cluster minimum (1-word like "specialista" is too broad)
+    #   - 4–12 competitors (>12 = too common to be impressive)
+    #   - Cluster must not be in the generic blacklist
+    best_p1 = None
+    best_p1_n = 0
     for p in pozice:
-        pub = p.get("publikovano") or ""
-        if "ktualizov" in pub:
-            dni = _compute_dni(p)
-            return ("A2", p, {
-                "dni": dni, "scanu": p.get("pocet_scanu", 1),
-                "total_pozic": total_pozic,
-            })
-
-    # A3 — Repeated posting
-    for p in pozice:
-        if p.get("predchozi_job_id"):
-            predchozi_raw = (p.get("predchozi_datum_prvni") or "")[:10]
-            datum_display = ""
-            if predchozi_raw and len(predchozi_raw) >= 10:
-                try:
-                    pd = datetime.fromisoformat(predchozi_raw)
-                    now = datetime.now()
-                    _cz_gen = {1:"ledna",2:"února",3:"března",4:"dubna",5:"května",
-                               6:"června",7:"července",8:"srpna",9:"září",
-                               10:"října",11:"listopadu",12:"prosince"}
-                    datum_display = "{}. {}".format(pd.day, _cz_gen.get(pd.month, str(pd.month)))
-                except Exception:
-                    datum_display = predchozi_raw
-            return ("A3", p, {
-                "datum": datum_display,
-                "scanu": p.get("pocet_scanu", 1),
-                "total_pozic": total_pozic,
-            })
-
-    # A1 — Long-running: pick position with highest scan count
-    best_a1 = None
-    best_scanu = 0
-    for p in pozice:
-        scanu = p.get("pocet_scanu", 1)
-        dni = _compute_dni(p)
-        if scanu >= 4 or dni >= 30:
-            if scanu > best_scanu or (scanu == best_scanu and dni > _compute_dni(best_a1 or {})):
-                best_a1 = p
-                best_scanu = scanu
-    if best_a1:
-        dni = _compute_dni(best_a1)
-        return ("A1", best_a1, {
-            "dni": dni, "scanu": best_scanu,
-            "total_pozic": total_pozic,
+        p_kraj = p.get("kraj", "") or ""
+        if not p_kraj or p_kraj == "Celá ČR":
+            continue
+        cl = _extract_role_cluster(p["pozice"])
+        if not cl or cl in _P1_GENERIC:
+            continue
+        key = (p_kraj, cl)
+        if key in competition:
+            n = len(competition[key] - {firma_low})
+            if 4 <= n <= 12 and n > best_p1_n:
+                best_p1 = p
+                best_p1_n = n
+                best_p1_kraj = p_kraj
+                best_p1_cl = cl
+    if best_p1 is not None:
+        return (1, f"{best_p1_n} firms in {best_p1_kraj} hiring {best_p1_cl}", {
+            "role": best_p1["pozice"],
+            "competitors": best_p1_n,
+            "cluster": best_p1_cl,
+            "region": best_p1_kraj,
         })
 
-    # D — Hiring wave (3+ positions)
-    if total_pozic >= 3:
-        names = [p["pozice"] for p in pozice[:3]]
-        return ("D", pozice[0], {"pocet": total_pozic, "names": names})
-
-    # E — Missing salary
+    # ── Priority 2: Rare skill combination ────────────────────────
     for p in pozice:
-        if not p.get("plat_text"):
-            return ("E", p, {"total_pozic": total_pozic})
+        title = p["pozice"]
+        cats = sum([
+            bool(_P2_LANG.search(title)),
+            bool(_P2_TECH.search(title)),
+            bool(_P2_DOMAIN.search(title)),
+            bool(_P2_SENIOR.search(title)),
+        ])
+        if cats >= 3:
+            combo_parts = []
+            lm = _P2_LANG.search(title)
+            if lm:
+                combo_parts.append(lm.group(0).lower())
+            tm = _P2_TECH.search(title)
+            if tm:
+                combo_parts.append(tm.group(0))
+            dm2 = _P2_DOMAIN.search(title)
+            if dm2:
+                combo_parts.append(dm2.group(0).lower())
+            combo = " + ".join(combo_parts[:3])
+            p_kraj = p.get("kraj", "") or ""
+            return (2, f"Rare combo: {combo}", {
+                "role": p["pozice"],
+                "combo": combo,
+                "region": p_kraj,
+            })
 
-    # F — Fallback
-    return ("F", pozice[0], {"total_pozic": total_pozic})
+    # ── Priority 3: Hiring wave (5+ positions) ────────────────────
+    if total_pozic >= 5:
+        return (3, f"{total_pozic} open positions", {
+            "count": total_pozic,
+        })
+
+    # ── Priority 4: Missing salary when competitors show it ───────
+    for p in pozice:
+        plat = p.get("plat_od") or 0
+        if plat > 0:
+            continue
+        p_kraj = p.get("kraj", "") or ""
+        cl = _extract_role_cluster(p["pozice"])
+        if not cl:
+            continue
+        key = (p_kraj, cl)
+        if key in salary:
+            total, with_sal = salary[key]
+            if total >= 5 and with_sal / total >= 0.50:
+                return (4, f"{with_sal}/{total} ads with salary in {p_kraj}/{cl}", {
+                    "role": p["pozice"],
+                    "region": p_kraj,
+                    "with_salary": with_sal,
+                    "total_ads": total,
+                })
+
+    # ── Priority 5: Long-running role (42+ days = 6+ weeks) ──────
+    for p in pozice:
+        dni = _compute_dni(p)
+        if dni >= 42:
+            weeks = dni // 7
+            return (5, f"Running {weeks} weeks", {
+                "role": p["pozice"],
+                "weeks": weeks,
+                "region": p.get("kraj", "") or "",
+            })
+
+    # ── INSUFFICIENT_DATA ─────────────────────────────────────────
+    return (0, "", {})
 
 
-def _missile_text(archetype: str, osloveni: str, firma_data: dict,
-                  ref_pozice: dict, kraj: str, extra: dict) -> dict:
-    """v3 — Braun/Reamer/Holland/Allred/Mowinski synthesis.
+# ── Message generation ────────────────────────────────────────────
 
-    Structure:  Fact → Market-phase interpretation → CTA
-    Returns {'direct': str, 'soft': str} — two CTA polarities.
+_STRONG_CTAS = [
+    "Pošlete mi číslo, řeknu vám, jak to vidím.",
+    "Pošlete mi číslo, řeknu za dvě minuty, "
+    "jestli bych to ještě zkoušel takhle, nebo už jinak.",
+    "Pošlete mi číslo, řeknu rovnou, jestli má cenu ještě čekat.",
+]
+_SOFT_CTA = "Má smysl si na to dát dvě minuty po telefonu?"
 
-    DIRECT (Reamer/Berman): "Pošlete číslo, řeknu rovnou..."
-    SOFT   (Braun/Allred):  "Mám k tomu jednu poznámku. Chcete ji sem...?"
 
-    Rules:
-    - No greeting, no introduction, no company name. Sign "Šárka".
-    - Write about market PHASE, not the role itself.
-    - Forbidden: nabídka, klient, recruitment, agentura, headhunter,
-      outsourcing, pomoc, analýza, audit
-    - Max 300 chars per variant.
+def _pick_cta(firma_norm: str, strong: bool = True) -> str:
+    """Deterministic CTA selection per company."""
+    if not strong:
+        return _SOFT_CTA
+    v = sum(ord(c) * (i + 1) for i, c in enumerate(firma_norm or "x"))
+    return _STRONG_CTAS[v % len(_STRONG_CTAS)]
+
+
+def _missile_message(priority: int, osloveni: str,
+                     role_nom: str, role_acc: str,
+                     firma: str, firma_norm: str,
+                     region: str, extra: dict) -> str:
+    """Generate the DM.  3 sentences: FACT → INTERPRETATION → CTA.
+    Signature: 'Šárka' on its own line.
     """
-    poz = ref_pozice["pozice"] if ref_pozice else ""
-    scanu = extra.get("scanu", (ref_pozice or {}).get("pocet_scanu", 1))
-    dni = extra.get("dni", _compute_dni(ref_pozice) if ref_pozice else 0)
+    loc = _region_locative(region)
 
-    # Deterministic sub-variant per company (consistent across reloads)
-    v = sum(ord(c) * (i + 1) for i, c in enumerate(
-        firma_data.get("firma_norm", "x"))) % 3
+    if priority == 1:
+        n = extra["competitors"]
+        cta = _pick_cta(firma_norm, strong=True)
+        return (
+            f"{osloveni}, {role_acc} teď v {loc} hledá "
+            f"kromě vás dalších {_num_cz(n)} firem. "
+            f"V takové situaci obvykle nevyhrává lepší inzerát, "
+            f"ale rychlost k pasivním kandidátům. "
+            f"{cta}\n\nŠárka"
+        )
 
-    # ── A2: Republished ad ──────────────────────────────────────────
-    if archetype == "A2":
-        if v == 0:
-            fi = (f"{osloveni}, {poz} — obnoveno po {scanu} kolech. "
-                  f"V téhle fázi stejný inzerát osloví stejné lidi "
-                  f"— kdo měl reagovat, už reagoval.")
-        elif v == 1:
-            fi = (f"{osloveni}, {poz} — {scanu}x ve scanu, teď obnoveno. "
-                  f"Obnovení nepřitáhne jiné lidi "
-                  f"— aktivní trh na tuhle roli je vyčerpaný.")
+    if priority == 2:
+        combo = extra["combo"]
+        cta = _pick_cta(firma_norm, strong=True)
+        return (
+            f"{osloveni}, {role_nom} s {combo} — to je kombinace, "
+            f"kterou v {loc} aktivně hledá málo lidí. "
+            f"Většina z nich práci nemění přes inzeráty. "
+            f"{cta}\n\nŠárka"
+        )
+
+    if priority == 3:
+        pocet = extra["count"]
+        cta = _pick_cta(firma_norm, strong=True)
+        if pocet > 15:
+            n_str = f"přes {_num_cz(pocet // 5 * 5)}"
         else:
-            fi = (f"{osloveni}, {poz} jste obnovili. "
-                  f"V téhle fázi problém nebývá v inzerátu, "
-                  f"ale v tom, že kanál je vyčerpaný.")
-        dc = ("Pošlete číslo, řeknu rovnou, jestli bych to ještě zkoušel "
-              "takhle, nebo měnil postup. — Šárka")
-        sc = ("Mám k tomu jednu stručnou poznámku. "
-              "Chcete ji sem, nebo je rychlejší telefon? — Šárka")
+            n_str = _num_cz(pocet)
+        return (
+            f"{osloveni}, u vás teď běží "
+            f"{n_str} otevřených pozic najednou. "
+            f"Při takovém objemu už většinou nejde o to, "
+            f"jestli přijdou správná CV — jde o kapacitu celého procesu. "
+            f"{cta}\n\nŠárka"
+        )
 
-    # ── A3: Repeated posting ────────────────────────────────────────
-    elif archetype == "A3":
-        datum = extra.get("datum", "")
-        if datum:
-            if v == 0:
-                fi = (f"{osloveni}, {poz} — podruhé od {datum}. "
-                      f"Druhé kolo přes portál většinou přivede "
-                      f"ty samé CV jako první.")
-            elif v == 1:
-                fi = (f"{osloveni}, {poz} — znovu, "
-                      f"předchozí od {datum} zanikla. "
-                      f"V téhle fázi portál obvykle recykluje "
-                      f"stejné kandidáty.")
-            else:
-                fi = (f"{osloveni}, {poz} — druhé zadání od {datum}. "
-                      f"To většinou znamená, že aktivní trh "
-                      f"tuhle roli nevyřešil napoprvé.")
-        else:
-            fi = (f"{osloveni}, {poz} — vypsáno podruhé. "
-                  f"V téhle fázi portál přivádí stejné lidi "
-                  f"jako poprvé.")
-        dc = ("Pošlete číslo, řeknu za minutu, "
-              "jestli to ještě řešit standardně. — Šárka")
-        sc = ("Mám k tomu stručný postřeh z oboru. "
-              "Chcete ho sem, nebo je rychlejší telefon? — Šárka")
+    if priority == 4:
+        w = extra["with_salary"]
+        t = extra["total_ads"]
+        cta = _pick_cta(firma_norm, strong=False)
+        return (
+            f"{osloveni}, u {role_acc} v {loc} "
+            f"teď {w} z {t} inzerátů uvádí mzdu. Váš ne. "
+            f"Kandidát klikne nejdřív tam, kde číslo vidí, "
+            f"a sem se vrátí až jako poslední — pokud vůbec. "
+            f"{cta}\n\nŠárka"
+        )
 
-    # ── A1: Long-running (main archetype) ───────────────────────────
-    elif archetype == "A1":
-        if scanu >= 6:
-            if v == 0:
-                fi = (f"{osloveni}, {poz} — {scanu}x ve scanu. "
-                      f"V téhle fázi bývá aktivní trh "
-                      f"obvykle vyčerpaný.")
-            elif v == 1:
-                fi = (f"{osloveni}, {poz} — {scanu}x ve scanu "
-                      f"a v {kraj} běží podobných rolí víc. "
-                      f"To většinou znamená, že lidi, "
-                      f"co aktivně hledají, už jsou pryč.")
-            else:
-                fi = (f"{osloveni}, {poz} visí {scanu} kol ve scanu. "
-                      f"V téhle fázi problém většinou nebývá "
-                      f"v inzerátu, ale v tom, že aktivní trh "
-                      f"tu roli nevyřeší.")
-        else:
-            # 4–5 scans
-            if v == 0:
-                fi = (f"{osloveni}, {poz} — {scanu}x ve scanu. "
-                      f"V téhle fázi portál obvykle přestává "
-                      f"přivádět nové lidi.")
-            elif v == 1:
-                fi = (f"{osloveni}, {poz} — {scanu}. kolo ve scanu. "
-                      f"To většinou znamená, že kdo měl "
-                      f"z portálu reagovat, už reagoval.")
-            else:
-                fi = (f"{osloveni}, {poz} — {scanu}x ve scanu "
-                      f"v {kraj}. V téhle fázi aktivní trh bývá "
-                      f"z velké části vyčerpaný.")
-        dc = ("Pošlete číslo, řeknu rovnou, jestli bych to ještě "
-              "čekal, nebo měnil postup. — Šárka")
-        sc = ("Mám k tomu jednu stručnou poznámku. "
-              "Chcete ji sem, nebo je rychlejší telefon? — Šárka")
+    if priority == 5:
+        weeks = extra["weeks"]
+        cta = _pick_cta(firma_norm, strong=True)
+        return (
+            f"{osloveni}, pozice {role_acc} u vás běží "
+            f"přes {_num_cz(weeks)} týdnů. "
+            f"V téhle fázi už aktivní kandidáti váš inzerát "
+            f"viděli a nezareagovali. "
+            f"{cta}\n\nŠárka"
+        )
 
-    # ── D: Hiring wave ──────────────────────────────────────────────
-    elif archetype == "D":
-        pocet = extra.get("pocet", 3)
-        names = extra.get("names", [])
-        if pocet > 5:
-            fi = (f"{osloveni}, {pocet} otevřených pozic najednou. "
-                  f"Při tomhle objemu aktivní trh nestačí "
-                  f"— nejlepší zmizí do dvou dnů.")
-        else:
-            names_str = ", ".join(names[:2])
-            fi = (f"{osloveni}, {pocet} pozic paralelně — {names_str}. "
-                  f"V téhle fázi portál sám nestíhá "
-                  f"pokrýt paralelní nábor.")
-        dc = ("Pošlete číslo, řeknu rovnou, "
-              "jestli to jde pokrýt rychleji. — Šárka")
-        sc = ("Mám k tomu postřeh z regionu. "
-              "Má smysl si to ověřit po telefonu? — Šárka")
-
-    # ── E: Missing salary ───────────────────────────────────────────
-    elif archetype == "E":
-        if v % 2 == 0:
-            fi = (f"{osloveni}, {poz} — bez platu v inzerátu. "
-                  f"Odezva bývá o polovinu nižší "
-                  f"— dobří kandidáti tyhle přeskakují.")
-        else:
-            fi = (f"{osloveni}, {poz} běží bez uvedeného platu. "
-                  f"V téhle fázi dobří kandidáti většinou "
-                  f"přeskočí na inzerát s čísly.")
-        dc = ("Pošlete číslo, řeknu, jestli jsou "
-              "na trhu a za kolik. — Šárka")
-        sc = ("Mám k tomu jednu poznámku z trhu. "
-              "Chcete ji sem? — Šárka")
-
-    # ── F: Fallback ─────────────────────────────────────────────────
-    else:
-        pocet = extra.get("total_pozic", 1)
-        if pocet > 1:
-            fi = (f"{osloveni}, {pocet} otevřených pozic v {kraj}. "
-                  f"Lidi, co to umí, na portálech aktivně nehledají.")
-        else:
-            fi = (f"{osloveni}, {poz} v {kraj}. "
-                  f"Aktivní trh na tyhle role bývá omezený.")
-        dc = "Pošlete číslo. — Šárka"
-        sc = "Mám k tomu jednu poznámku. Chcete ji sem? — Šárka"
-
-    return {"direct": f"{fi} {dc}", "soft": f"{fi} {sc}"}
+    return ""  # should not happen (priority 0 is filtered out)
 
 
-_ARCHETYPE_LABELS = {
-    "A2": "Obnovený inzerát",
-    "A3": "Opakovaně zadáno",
-    "A1": "Dlouho otevřená",
-    "D": "Budují tým",
-    "E": "Bez platu",
-    "F": "Aktivní nábor",
+# ── Validation ────────────────────────────────────────────────────
+
+_BANNED_RE = re.compile(
+    r'(?:'
+    r'vidím,?\s+(?:že|u\s+vás)'
+    r'|všimla\s+jsem|zachytila\s+jsem|narazila\s+jsem'
+    r'|dívám\s+se|sleduju|prošla\s+jsem'
+    r'|pracuju\s+s|pomáhám\s+firmám'
+    r'|ozývám\s+se'
+    r'|ráda\s+bych|chtěla\s+bych'
+    r'|napíšu\s+rovnou|napíšu\s+stručně'
+    r'|\bagentur[ay]?\b|\bpersonální\b'
+    r'|\bslužb[auy]?\b|\bnabídk[auy]?\b|\břešení\b'
+    r'|\bkandidát[ůyi]?\b|\bsíť\s+(?:lidí|kandidátů)\b'
+    r'|\bpomoc\b|\bpomůžeme\b'
+    r'|\bspolupráce?\b|\bspolupracovat\b'
+    r'|\bkonzultac[ei]?\b|\baudit\b|\banalýz[auy]?\b'
+    r'|\bdirect\s+search\b|\bsintera\b'
+    r'|\bvím,?\s+jak\s+(?:to\s+frustruje|moc)\b'
+    r'|\bchápu,?\s+že\b'
+    r'|\bdávalo\s+by\s+smysl\b'
+    r'|\bkdyby\s+vás\s+to\s+zajímalo\b'
+    r'|\bpokud\s+to\s+dává\s+smysl\b'
+    r'|\bráda\s+se\s+propojím\b'
+    r'|\bdobrý\s+den\b|\bvážen[ýá]\b'
+    r')',
+    re.IGNORECASE,
+)
+
+
+def _missile_validate(msg: str) -> bool:
+    """Return True if message passes all validation checks."""
+    if not msg:
+        return False
+    # Must start with Pane/Paní
+    if not msg.startswith("Pan"):
+        return False
+    # Must end with Šárka
+    if "Šárka" not in msg:
+        return False
+    # No banned words
+    if _BANNED_RE.search(msg):
+        return False
+    # Sentence count: 3-4 (rough check: count periods + question marks)
+    body = msg.split("\n\n")[0]  # before signature
+    sents = len(re.findall(r'[.?!]', body))
+    if sents > 5:
+        return False
+    return True
+
+
+# ── UI constants ──────────────────────────────────────────────────
+
+_PRIORITY_LABELS = {
+    1: "Regionální konkurence",
+    2: "Vzácná kombinace",
+    3: "Budují tým",
+    4: "Chybí plat",
+    5: "Dlouho otevřená",
+    0: "Nedostatek dat",
 }
 
-_ARCHETYPE_COLORS = {
-    "A2": ("#dc2626", "#fef2f2"),
-    "A3": ("#7c3aed", "#faf5ff"),
-    "A1": ("#ea580c", "#fff7ed"),
-    "D": ("#2563eb", "#dbeafe"),
-    "E": ("#d97706", "#fefce8"),
-    "F": ("#64748b", "#f8fafc"),
+_PRIORITY_COLORS = {
+    1: ("#dc2626", "#fef2f2"),
+    2: ("#7c3aed", "#faf5ff"),
+    3: ("#2563eb", "#dbeafe"),
+    4: ("#d97706", "#fefce8"),
+    5: ("#ea580c", "#fff7ed"),
+    0: ("#64748b", "#f8fafc"),
 }
 
+
+# ── Main MISSILE generator ───────────────────────────────────────
 
 def generate_missile_dms(kraj: str = "", limit: int = 50) -> list:
-    """MISSILE cold DM generator.
+    """MISSILE v4 cold DM generator.
 
-    Fact → diagnosis → "Pošlete číslo."
-    Three sentences. No greetings. No introductions. No company name.
-
-    Returns list sorted by archetype priority + signal score.
-    Excludes already-contacted companies.
+    FACT → INTERPRETATION → MICRO-STEP.
+    Priority system: 1 (regional competition) → 2 (rare combo) →
+    3 (hiring wave) → 4 (missing salary) → 5 (long-running).
+    If no priority fires → INSUFFICIENT_DATA → skip.
+    Naturalized role names, Czech declension, banned-word validation.
     """
     result = radar_matches(skip_fuzzy=True)
     matches = result.get("matches", [])
+    ctx = _missile_context()
 
     dms = []
     for m in matches:
@@ -2056,53 +2443,69 @@ def generate_missile_dms(kraj: str = "", limit: int = 50) -> list:
         if kraj and kraj not in m.get("kraje", []):
             continue
 
-        archetype, ref_pozice, extra = _missile_archetype(m)
+        msg_kraj = kraj or (m["kraje"][0] if m.get("kraje") else "ČR")
 
-        dm = m["decision_makers"][0]
-        # Skip bad DM data: short names, incomplete records
-        last = dm.get("last_name", "").strip()
-        full = dm.get("full_name", "").strip()
+        # ── Priority ──
+        pri, signal_text, extra = _missile_priority(m, ctx, kraj)
+        if pri == 0:
+            continue  # INSUFFICIENT_DATA — skip
+
+        # ── Contact validation ──
+        dm_contact = m["decision_makers"][0]
+        last = dm_contact.get("last_name", "").strip()
+        full = dm_contact.get("full_name", "").strip()
         if len(full) < 5 or len(last) <= 2:
             continue
-        # Skip if last name looks like garbage (no uppercase letter)
-        clean_last = re.sub(r'[,\s]+(MBA|PhD|CSc|Ing|Mgr|Bc|DiS).*$', '', last, flags=re.IGNORECASE).strip().rstrip(',')
+        clean_last = re.sub(
+            r'[,\s]+(MBA|PhD|CSc|Ing|Mgr|Bc|DiS).*$', '',
+            last, flags=re.IGNORECASE).strip().rstrip(',')
         if clean_last and not any(c.isupper() for c in clean_last):
             continue
-        osloveni = _gender_osloveni(dm)
+        osloveni = _gender_osloveni(dm_contact)
         if not osloveni or len(osloveni) < 5:
             continue
 
-        pozice_name = ref_pozice["pozice"] if ref_pozice else m["pozice"][0]["pozice"]
-        msg_kraj = kraj or (m["kraje"][0] if m["kraje"] else "ČR")
+        # ── Role naturalization + declension ──
+        ref_role_raw = extra.get("role", "")
+        if not ref_role_raw:
+            ref_role_raw = m["pozice"][0]["pozice"] if m.get("pozice") else ""
+        role_region = extra.get("region", msg_kraj)
+        role_nom = _naturalize_role(ref_role_raw, role_region)
+        role_acc = _decline_role_acc(role_nom)
 
-        texts = _missile_text(archetype, osloveni, m, ref_pozice, msg_kraj, extra)
+        # ── Message generation ──
+        msg = _missile_message(
+            pri, osloveni, role_nom, role_acc,
+            m["firma"], m["firma_norm"], role_region, extra,
+        )
+        if not msg or not _missile_validate(msg):
+            continue
 
-        color, bg = _ARCHETYPE_COLORS.get(archetype, ("#64748b", "#f8fafc"))
-        priority = _MISSILE_PRIORITY.get(archetype, 0)
+        color, bg = _PRIORITY_COLORS.get(pri, ("#64748b", "#f8fafc"))
 
         dms.append({
             "firma": m["firma"],
             "firma_norm": m["firma_norm"],
-            "kontakt": dm["full_name"],
-            "kontakt_title": dm.get("current_title", ""),
-            "linkedin_url": dm.get("profile_url", ""),
+            "kontakt": dm_contact["full_name"],
+            "kontakt_title": dm_contact.get("current_title", ""),
+            "linkedin_url": dm_contact.get("profile_url", ""),
             "kraj": msg_kraj,
             "signal": m.get("signal", ""),
             "signal_score": m.get("signal_score", 0),
             "pocet_pozic": m["pocet_pozic"],
-            "archetype": archetype,
-            "archetype_label": _ARCHETYPE_LABELS.get(archetype, ""),
+            "archetype": f"P{pri}",
+            "archetype_label": _PRIORITY_LABELS.get(pri, ""),
             "archetype_color": color,
             "archetype_bg": bg,
-            "priority": priority,
-            "pozice_ref": pozice_name,
-            "zprava": texts["direct"],
-            "zprava_soft": texts["soft"],
-            "char_count": len(texts["direct"]),
-            "char_count_soft": len(texts["soft"]),
+            "priority": pri,
+            "pozice_ref": role_nom,
+            "zprava": msg,
+            "char_count": len(msg),
         })
 
-    dms.sort(key=lambda d: (d["priority"], d["signal_score"]), reverse=True)
+    dms.sort(key=lambda d: (d["priority"], d["signal_score"]), reverse=False)
+    # Priority 1 is strongest → sort ascending so P1 comes first
+    dms.sort(key=lambda d: (d["priority"], -d["signal_score"]))
     return dms[:limit]
 
 
