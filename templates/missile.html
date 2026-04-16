@@ -31,8 +31,10 @@
     .dm-text-wrap { padding: 16px 20px; background: #f8f7ff; }
     .dm-text { white-space: pre-wrap; font-size: 0.88em; line-height: 1.65;
                color: #1e1b4b; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .dm-text.hidden { display: none; }
     .dm-char-count { font-size: 0.75em; color: #888; margin-top: 8px; text-align: right; }
     .dm-char-count.over { color: #dc2626; font-weight: 600; }
+    .dm-char-count.hidden { display: none; }
 
     .dm-actions { padding: 12px 20px 16px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 
@@ -44,6 +46,17 @@
     .legend-dot { width: 12px; height: 12px; border-radius: 50%; }
 
     .copy-ok { color: #16a34a; font-weight: 600; font-size: 0.82em; display: none; }
+
+    /* CTA toggle */
+    .cta-toggle { display: inline-flex; border: 2px solid #6366f1; border-radius: 8px;
+                  overflow: hidden; margin-left: 12px; }
+    .cta-toggle button { border: none; padding: 5px 16px; font-size: 0.82em;
+                         font-weight: 600; cursor: pointer; background: #fff;
+                         color: #6366f1; transition: all 0.15s; }
+    .cta-toggle button.active { background: #6366f1; color: #fff; }
+    .cta-toggle button:hover:not(.active) { background: #f0efff; }
+
+    .cta-info { font-size: 0.75em; color: #888; margin-left: 8px; }
 </style>
 {% endblock %}
 
@@ -54,6 +67,18 @@
         Personalizovane LinkedIn zpravy podle signalu. Zkopiruj — otevri LinkedIn — posli.
         <br>Podpis: Sarka, Sintera | Max 300 znaku | Bez zakazanych slov
     </div>
+</div>
+
+<!-- CTA polarity toggle -->
+<div style="margin-bottom: 20px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px;">
+    <strong style="font-size: 0.9em;">Styl CTA:</strong>
+    <div class="cta-toggle">
+        <button id="toggle-direct" class="active" onclick="setCTA('direct')">DIRECT</button>
+        <button id="toggle-soft" onclick="setCTA('soft')">SOFT</button>
+    </div>
+    <span class="cta-info" id="cta-info">
+        Reamer/Berman — "Poslete cislo, reknu rovnou..."
+    </span>
 </div>
 
 <!-- Legend -->
@@ -138,9 +163,13 @@
     </div>
 
     <div class="dm-text-wrap">
-        <div class="dm-text" id="text-{{ loop.index }}">{{ dm.zprava }}</div>
-        <div class="dm-char-count {% if dm.char_count > 300 %}over{% endif %}">
+        <div class="dm-text dm-text-direct" id="text-direct-{{ loop.index }}">{{ dm.zprava }}</div>
+        <div class="dm-text dm-text-soft hidden" id="text-soft-{{ loop.index }}">{{ dm.zprava_soft }}</div>
+        <div class="dm-char-count dm-cc-direct {% if dm.char_count > 300 %}over{% endif %}">
             {{ dm.char_count }} znaku {% if dm.char_count > 300 %}(prekrocen limit 300!){% endif %}
+        </div>
+        <div class="dm-char-count dm-cc-soft hidden {% if dm.char_count_soft > 300 %}over{% endif %}">
+            {{ dm.char_count_soft }} znaku {% if dm.char_count_soft > 300 %}(prekrocen limit 300!){% endif %}
         </div>
     </div>
 
@@ -174,12 +203,42 @@
 
 {% block scripts %}
 <script>
+var currentCTA = 'direct';
+
+function setCTA(style) {
+    currentCTA = style;
+    // Toggle buttons
+    document.getElementById('toggle-direct').classList.toggle('active', style === 'direct');
+    document.getElementById('toggle-soft').classList.toggle('active', style === 'soft');
+    // Update info text
+    var info = document.getElementById('cta-info');
+    if (style === 'direct') {
+        info.textContent = 'Reamer/Berman — "Poslete cislo, reknu rovnou..."';
+    } else {
+        info.textContent = 'Braun/Allred — "Mam k tomu jednu poznamku. Chcete ji sem...?"';
+    }
+    // Toggle all message texts
+    document.querySelectorAll('.dm-text-direct').forEach(function(el) {
+        el.classList.toggle('hidden', style !== 'direct');
+    });
+    document.querySelectorAll('.dm-text-soft').forEach(function(el) {
+        el.classList.toggle('hidden', style !== 'soft');
+    });
+    document.querySelectorAll('.dm-cc-direct').forEach(function(el) {
+        el.classList.toggle('hidden', style !== 'direct');
+    });
+    document.querySelectorAll('.dm-cc-soft').forEach(function(el) {
+        el.classList.toggle('hidden', style !== 'soft');
+    });
+}
+
 function copyDM(idx) {
-    const text = document.getElementById('text-' + idx).innerText;
-    navigator.clipboard.writeText(text).then(() => {
-        const ok = document.getElementById('copy-ok-' + idx);
+    var textId = 'text-' + currentCTA + '-' + idx;
+    var text = document.getElementById(textId).innerText;
+    navigator.clipboard.writeText(text).then(function() {
+        var ok = document.getElementById('copy-ok-' + idx);
         ok.style.display = 'inline';
-        setTimeout(() => { ok.style.display = 'none'; }, 2000);
+        setTimeout(function() { ok.style.display = 'none'; }, 2000);
     });
 }
 
@@ -193,7 +252,7 @@ function markSent(firmaNorm, firma, kontakt, kontaktUrl, kraj) {
             kontakt: kontakt, kontakt_url: kontaktUrl,
             kanal: 'LinkedIn DM', kraj: kraj
         })
-    }).then(r => r.json()).then(data => {
+    }).then(function(r) { return r.json(); }).then(function(data) {
         if (data.ok) location.reload();
     });
 }

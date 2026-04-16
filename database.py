@@ -1707,17 +1707,28 @@ def generate_batch_messages(recommendations: list, template: str = "") -> list:
 
 # ── MISSILE: Cold LinkedIn DM Generator ──────────────────────────────────────
 #
+# Framework: Braun / Reamer / Holland / Allred / Mowinski synthesis
+#
+# Struktura zprávy:
+#   1. Fakt — konkrétní, měřitelný, nepopiratelný. Dokazuje, že nepíšeme naslepo.
+#   2. Interpretace fáze trhu — NE reportáž ("vidím, že hledáte"), ALE diagnóza
+#      ("v téhle fázi bývá aktivní trh vyčerpaný"). Říkáme, co to ZNAMENÁ.
+#   3. Malý next step — snížit tření odpovědi na minimum.
+#
+# Dvě CTA polarity:
+#   DIRECT (Reamer/Berman): "Pošlete číslo, řeknu během 2 minut, jestli bych
+#     to ještě čekal, nebo měnil postup."
+#   SOFT (Braun/Allred): "Mám k tomu jednu stručnou poznámku. Chcete ji sem,
+#     nebo je rychlejší telefon?"
+#
 # Pravidla:
-#   1. Fakt o příjemci — konkrétní, měřitelný, dokazuje že nepíšeme naslepo
-#   2. Diagnóza — co ten fakt znamená pro jeho situaci. Ne soucit, ne nabídka
-#   3. CTA — "Pošlete číslo." Jeden krok, telefon, ne pokračování chatu
-#
-# Tři věty. Bez zdvořilostí. Bez představování. Bez nabídek.
-# Podpis jen "Šárka" — žádný název firmy.
-# Max 300 znaků (LinkedIn connection request limit).
-# Zakázaná slova: nabídka, klient, recruitment, agentura, headhunter, outsourcing
-#
-# Cíl: příjemce si řekne "jak to ví?" — a odpoví.
+#   - Žádný "Dobrý den", žádné představování, žádný název firmy
+#   - Podpis jen "Šárka"
+#   - Zakázaná slova: nabídka, klient, recruitment, agentura, headhunter,
+#     outsourcing, pomoc, analýza, audit
+#   - Nepsat o roli. Psát o fázi trhu.
+#   - Max 300 znaků
+#   - Cíl: příjemce si řekne "jak to ví?" — a odpoví.
 
 _MISSILE_PRIORITY = {"A2": 6, "A3": 5, "A1": 4, "D": 3, "E": 2, "F": 1}
 
@@ -1852,121 +1863,157 @@ def _missile_archetype(firma_data: dict) -> tuple:
 
 
 def _missile_text(archetype: str, osloveni: str, firma_data: dict,
-                  ref_pozice: dict, kraj: str, extra: dict) -> str:
-    """Three sentences. Fact → diagnosis → CTA.
+                  ref_pozice: dict, kraj: str, extra: dict) -> dict:
+    """v3 — Braun/Reamer/Holland/Allred/Mowinski synthesis.
+
+    Structure:  Fact → Market-phase interpretation → CTA
+    Returns {'direct': str, 'soft': str} — two CTA polarities.
+
+    DIRECT (Reamer/Berman): "Pošlete číslo, řeknu rovnou..."
+    SOFT   (Braun/Allred):  "Mám k tomu jednu poznámku. Chcete ji sem...?"
 
     Rules:
-    - Start with name + measurable fact about THEIR situation
-    - Diagnosis: what the fact means. Not sympathy. Not offer. Diagnosis.
-    - CTA: "Pošlete číslo." One step. Phone number. Done.
-    - No greeting. No introduction. No company name. Sign "Šárka".
-    - Forbidden: nabídka, klient, recruitment, agentura, headhunter, outsourcing
+    - No greeting, no introduction, no company name. Sign "Šárka".
+    - Write about market PHASE, not the role itself.
+    - Forbidden: nabídka, klient, recruitment, agentura, headhunter,
+      outsourcing, pomoc, analýza, audit
+    - Max 300 chars per variant.
     """
     poz = ref_pozice["pozice"] if ref_pozice else ""
     scanu = extra.get("scanu", (ref_pozice or {}).get("pocet_scanu", 1))
     dni = extra.get("dni", _compute_dni(ref_pozice) if ref_pozice else 0)
 
+    # Deterministic sub-variant per company (consistent across reloads)
+    v = sum(ord(c) * (i + 1) for i, c in enumerate(
+        firma_data.get("firma_norm", "x"))) % 3
+
     # ── A2: Republished ad ──────────────────────────────────────────
     if archetype == "A2":
-        if scanu >= 5:
-            return (
-                "{osl}, {poz} — {scanu}x ve scanu a obnoveno. "
-                "Inzerát, co po {scanu} kolech nepřitáhl správného člověka, ho nepřitáhne ani po dalším. "
-                "Pošlete číslo. — Šárka"
-            ).format(osl=osloveni, poz=poz, scanu=scanu)
-        return (
-            "{osl}, {poz} jste obnovili. "
-            "Stejný inzerát přitáhne stejné lidi — ti, co jsou dobří, na portálech nehledají. "
-            "Pošlete číslo. — Šárka"
-        ).format(osl=osloveni, poz=poz)
+        if v == 0:
+            fi = (f"{osloveni}, {poz} — obnoveno po {scanu} kolech. "
+                  f"V téhle fázi stejný inzerát osloví stejné lidi "
+                  f"— kdo měl reagovat, už reagoval.")
+        elif v == 1:
+            fi = (f"{osloveni}, {poz} — {scanu}x ve scanu, teď obnoveno. "
+                  f"Obnovení nepřitáhne jiné lidi "
+                  f"— aktivní trh na tuhle roli je vyčerpaný.")
+        else:
+            fi = (f"{osloveni}, {poz} jste obnovili. "
+                  f"V téhle fázi problém nebývá v inzerátu, "
+                  f"ale v tom, že kanál je vyčerpaný.")
+        dc = ("Pošlete číslo, řeknu rovnou, jestli bych to ještě zkoušel "
+              "takhle, nebo měnil postup. — Šárka")
+        sc = ("Mám k tomu jednu stručnou poznámku. "
+              "Chcete ji sem, nebo je rychlejší telefon? — Šárka")
 
     # ── A3: Repeated posting ────────────────────────────────────────
-    if archetype == "A3":
+    elif archetype == "A3":
         datum = extra.get("datum", "")
-        total_pozic = extra.get("total_pozic", 1)
-        if datum and scanu >= 4:
-            return (
-                "{osl}, {poz} — druhé kolo od {datum}, {scanu}x ve scanu. "
-                "Stejný portál + stejný inzerát = stejné CV. "
-                "Pošlete číslo. — Šárka"
-            ).format(osl=osloveni, poz=poz, datum=datum, scanu=scanu)
-        if datum and total_pozic >= 3:
-            return (
-                "{osl}, {poz} — znovu od {datum}, k tomu dalších {dalsi} pozic. "
-                "Portál podruhé přivede stejné CV. "
-                "Hoďte číslo. — Šárka"
-            ).format(osl=osloveni, poz=poz, datum=datum, dalsi=total_pozic - 1)
         if datum:
-            return (
-                "{osl}, {poz} — předchozí od {datum} zanikla, teď znovu. "
-                "Portál podruhé přivede ty samé lidi. "
-                "Pošlete číslo, řeknu, kde jsou ti mimo portály. — Šárka"
-            ).format(osl=osloveni, poz=poz, datum=datum)
-        return (
-            "{osl}, {poz} — vypsáno podruhé. "
-            "Když první kolo nevyšlo, stejný kanál to nevyřeší. "
-            "Pošlete číslo. — Šárka"
-        ).format(osl=osloveni, poz=poz)
+            if v == 0:
+                fi = (f"{osloveni}, {poz} — podruhé od {datum}. "
+                      f"Druhé kolo přes portál většinou přivede "
+                      f"ty samé CV jako první.")
+            elif v == 1:
+                fi = (f"{osloveni}, {poz} — znovu, "
+                      f"předchozí od {datum} zanikla. "
+                      f"V téhle fázi portál obvykle recykluje "
+                      f"stejné kandidáty.")
+            else:
+                fi = (f"{osloveni}, {poz} — druhé zadání od {datum}. "
+                      f"To většinou znamená, že aktivní trh "
+                      f"tuhle roli nevyřešil napoprvé.")
+        else:
+            fi = (f"{osloveni}, {poz} — vypsáno podruhé. "
+                  f"V téhle fázi portál přivádí stejné lidi "
+                  f"jako poprvé.")
+        dc = ("Pošlete číslo, řeknu za minutu, "
+              "jestli to ještě řešit standardně. — Šárka")
+        sc = ("Mám k tomu stručný postřeh z oboru. "
+              "Chcete ho sem, nebo je rychlejší telefon? — Šárka")
 
-    # ── A1: Long-running ────────────────────────────────────────────
-    if archetype == "A1":
-        if scanu >= 6 and dni >= 30:
-            return (
-                "{osl}, {poz} — {scanu}x ve scanu, {dni}. den. "
-                "Kdo měl z portálu reagovat, už reagoval. Zbytek musíte oslovit přímo. "
-                "Pošlete číslo. — Šárka"
-            ).format(osl=osloveni, poz=poz, scanu=scanu, dni=dni)
-        if scanu >= 4:
-            return (
-                "{osl}, {poz} — {scanu}x ve scanu. "
-                "Po {scanu} kolech bez obsazení portál nepomůže — lidi, co to umí, tam nehledají. "
-                "Hoďte číslo, za minutu řeknu, koho mám. — Šárka"
-            ).format(osl=osloveni, poz=poz, scanu=scanu)
-        # 30+ days, fewer scans
-        return (
-            "{osl}, {poz} běží {dni} dní. "
-            "Po téhle době se pool na portálu vyčerpal. "
-            "Pošlete číslo, řeknu za 2 minuty, koho z oboru mám. — Šárka"
-        ).format(osl=osloveni, poz=poz, dni=dni)
+    # ── A1: Long-running (main archetype) ───────────────────────────
+    elif archetype == "A1":
+        if scanu >= 6:
+            if v == 0:
+                fi = (f"{osloveni}, {poz} — {scanu}x ve scanu. "
+                      f"V téhle fázi bývá aktivní trh "
+                      f"obvykle vyčerpaný.")
+            elif v == 1:
+                fi = (f"{osloveni}, {poz} — {scanu}x ve scanu "
+                      f"a v {kraj} běží podobných rolí víc. "
+                      f"To většinou znamená, že lidi, "
+                      f"co aktivně hledají, už jsou pryč.")
+            else:
+                fi = (f"{osloveni}, {poz} visí {scanu} kol ve scanu. "
+                      f"V téhle fázi problém většinou nebývá "
+                      f"v inzerátu, ale v tom, že aktivní trh "
+                      f"tu roli nevyřeší.")
+        else:
+            # 4–5 scans
+            if v == 0:
+                fi = (f"{osloveni}, {poz} — {scanu}x ve scanu. "
+                      f"V téhle fázi portál obvykle přestává "
+                      f"přivádět nové lidi.")
+            elif v == 1:
+                fi = (f"{osloveni}, {poz} — {scanu}. kolo ve scanu. "
+                      f"To většinou znamená, že kdo měl "
+                      f"z portálu reagovat, už reagoval.")
+            else:
+                fi = (f"{osloveni}, {poz} — {scanu}x ve scanu "
+                      f"v {kraj}. V téhle fázi aktivní trh bývá "
+                      f"z velké části vyčerpaný.")
+        dc = ("Pošlete číslo, řeknu rovnou, jestli bych to ještě "
+              "čekal, nebo měnil postup. — Šárka")
+        sc = ("Mám k tomu jednu stručnou poznámku. "
+              "Chcete ji sem, nebo je rychlejší telefon? — Šárka")
 
     # ── D: Hiring wave ──────────────────────────────────────────────
-    if archetype == "D":
+    elif archetype == "D":
         pocet = extra.get("pocet", 3)
         names = extra.get("names", [])
         if pocet > 5:
-            return (
-                "{osl}, {pocet} otevřených pozic. "
-                "Při tomhle objemu kandidáti z portálu nestačí — nejlepší zmizí do 48 hodin. "
-                "Hoďte číslo. — Šárka"
-            ).format(osl=osloveni, pocet=pocet)
-        names_str = ", ".join(names[:2])
-        return (
-            "{osl}, {pocet} pozic najednou — {names}. "
-            "Paralelní nábor přes inzeráty nestíháte pokrýt. "
-            "Pošlete číslo. — Šárka"
-        ).format(osl=osloveni, pocet=pocet, names=names_str)
+            fi = (f"{osloveni}, {pocet} otevřených pozic najednou. "
+                  f"Při tomhle objemu aktivní trh nestačí "
+                  f"— nejlepší zmizí do dvou dnů.")
+        else:
+            names_str = ", ".join(names[:2])
+            fi = (f"{osloveni}, {pocet} pozic paralelně — {names_str}. "
+                  f"V téhle fázi portál sám nestíhá "
+                  f"pokrýt paralelní nábor.")
+        dc = ("Pošlete číslo, řeknu rovnou, "
+              "jestli to jde pokrýt rychleji. — Šárka")
+        sc = ("Mám k tomu postřeh z regionu. "
+              "Má smysl si to ověřit po telefonu? — Šárka")
 
     # ── E: Missing salary ───────────────────────────────────────────
-    if archetype == "E":
-        return (
-            "{osl}, {poz} — bez platu v inzerátu. "
-            "Odezva je o polovinu nižší, nejlepší lidi tyhle přeskakují. "
-            "Pošlete číslo, řeknu, jestli jsou na trhu a za kolik. — Šárka"
-        ).format(osl=osloveni, poz=poz)
+    elif archetype == "E":
+        if v % 2 == 0:
+            fi = (f"{osloveni}, {poz} — bez platu v inzerátu. "
+                  f"Odezva bývá o polovinu nižší "
+                  f"— dobří kandidáti tyhle přeskakují.")
+        else:
+            fi = (f"{osloveni}, {poz} běží bez uvedeného platu. "
+                  f"V téhle fázi dobří kandidáti většinou "
+                  f"přeskočí na inzerát s čísly.")
+        dc = ("Pošlete číslo, řeknu, jestli jsou "
+              "na trhu a za kolik. — Šárka")
+        sc = ("Mám k tomu jednu poznámku z trhu. "
+              "Chcete ji sem? — Šárka")
 
-    # ── F: Fallback — shortest possible ─────────────────────────────
-    pocet = extra.get("total_pozic", 1)
-    if pocet > 1:
-        return (
-            "{osl}, {pocet} otevřených pozic v {kraj}. "
-            "Lidi, co to umí, na portálech nehledají. "
-            "Hoďte číslo. — Šárka"
-        ).format(osl=osloveni, pocet=pocet, kraj=kraj)
-    return (
-        "{osl}, hledáte {poz}. "
-        "Mám lidi z oboru, co na inzeráty nereagují. "
-        "Pošlete číslo. — Šárka"
-    ).format(osl=osloveni, poz=poz)
+    # ── F: Fallback ─────────────────────────────────────────────────
+    else:
+        pocet = extra.get("total_pozic", 1)
+        if pocet > 1:
+            fi = (f"{osloveni}, {pocet} otevřených pozic v {kraj}. "
+                  f"Lidi, co to umí, na portálech aktivně nehledají.")
+        else:
+            fi = (f"{osloveni}, {poz} v {kraj}. "
+                  f"Aktivní trh na tyhle role bývá omezený.")
+        dc = "Pošlete číslo. — Šárka"
+        sc = "Mám k tomu jednu poznámku. Chcete ji sem? — Šárka"
+
+    return {"direct": f"{fi} {dc}", "soft": f"{fi} {sc}"}
 
 
 _ARCHETYPE_LABELS = {
@@ -2028,7 +2075,7 @@ def generate_missile_dms(kraj: str = "", limit: int = 50) -> list:
         pozice_name = ref_pozice["pozice"] if ref_pozice else m["pozice"][0]["pozice"]
         msg_kraj = kraj or (m["kraje"][0] if m["kraje"] else "ČR")
 
-        text = _missile_text(archetype, osloveni, m, ref_pozice, msg_kraj, extra)
+        texts = _missile_text(archetype, osloveni, m, ref_pozice, msg_kraj, extra)
 
         color, bg = _ARCHETYPE_COLORS.get(archetype, ("#64748b", "#f8fafc"))
         priority = _MISSILE_PRIORITY.get(archetype, 0)
@@ -2049,8 +2096,10 @@ def generate_missile_dms(kraj: str = "", limit: int = 50) -> list:
             "archetype_bg": bg,
             "priority": priority,
             "pozice_ref": pozice_name,
-            "zprava": text,
-            "char_count": len(text),
+            "zprava": texts["direct"],
+            "zprava_soft": texts["soft"],
+            "char_count": len(texts["direct"]),
+            "char_count_soft": len(texts["soft"]),
         })
 
     dms.sort(key=lambda d: (d["priority"], d["signal_score"]), reverse=True)
