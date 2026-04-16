@@ -144,6 +144,12 @@
 
         <div class="sidebar-section">
             <div class="sidebar-section-label">Data</div>
+            <a href="/firmy" class="{% if active_page == 'firmy' %}active{% endif %}">
+                <span class="icon">&#127970;</span> <span>Firmy</span>
+            </a>
+            <a href="/pozice?filtr=aktivni" class="{% if active_page == 'pozice' %}active{% endif %}">
+                <span class="icon">&#128188;</span> <span>Pozice</span>
+            </a>
             <a href="/scraper" class="{% if active_page == 'scraper' %}active{% endif %}">
                 <span class="icon">&#128269;</span> <span>Scraper</span>
             </a>

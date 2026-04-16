@@ -34,7 +34,7 @@ KRAJE: dict[str, tuple[str, str]] = {
     "lbk": ("Liberecký kraj",          "liberecky-kraj"),
     "hkk": ("Královéhradecký kraj",    "kralovehradecky-kraj"),
     "pak": ("Pardubický kraj",         "pardubicky-kraj"),
-    "vys": ("Kraj Vysočina",           "kraj-vysocina"),
+    "vys": ("Kraj Vysočina",           "vysocina-kraj"),
     "jhm": ("Jihomoravský kraj",       "jihomoravsky-kraj"),
     "olk": ("Olomoucký kraj",          "olomoucky-kraj"),
     "zlk": ("Zlínský kraj",            "zlinsky-kraj"),
@@ -467,16 +467,21 @@ def scrape(
     if uvazek:
         uvazek_slug = UVAZKY.get(uvazek[0], "")
 
-    # Pokud jsou vybrány VŠECHNY obory, scrapujeme bez filtru oboru (= vše)
-    # — tak dostaneme i pozice v kategoriích, které nemáme v OBORY.
-    # Pokud je vybraná podmnožina, scrapujeme každý zvlášť a deduplikujeme.
+    # Jobs.cz vrací max 1 350 výsledků (45 stran × 30) na jeden dotaz.
+    # Aby se nic neztratilo, VŽDY scrapujeme po jednotlivých oborech —
+    # každý obor má vlastní 1 350-limit, takže celkově pokryjeme vše.
+    # Deduplikace přes seen_ids zajistí, že se nic nezdvojí.
     obor_slugs = []
-    if obory and len(obory) < len(OBORY):
+    if obory:
         for o in obory:
             slug = OBORY.get(o, o)
             obor_slugs.append(slug)
     else:
-        obor_slugs = [""]   # prázdný slug = žádný filtr oboru
+        # Žádné obory nevybrány → projdeme všechny definované obory
+        obor_slugs = list(OBORY.values())
+
+    if not obor_slugs:
+        obor_slugs = [""]   # fallback — bez filtru
 
     vsechny = []
     seen_ids: set[str] = set()

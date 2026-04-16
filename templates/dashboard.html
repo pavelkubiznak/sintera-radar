@@ -5,35 +5,50 @@
 {% block content %}
 <div class="main-header">
     <h1>Dashboard</h1>
-    <div class="subtitle">Posledni scan: {{ d_stats.posledni_scan[:16] if d_stats.posledni_scan != '—' else '—' }}</div>
+    <div class="subtitle">Posledni scan: {{ d_stats.posledni_scan[:16] if d_stats.posledni_scan != '—' else '—' }} | Bez agentur</div>
 </div>
 
 <!-- Key metrics -->
 <div class="stats-row">
-    <div class="stat-card purple">
+    <a href="/pozice?filtr=aktivni" class="stat-card purple" style="text-decoration:none; color:inherit; cursor:pointer;">
         <div class="number">{{ d_stats.aktivni_pozice }}</div>
         <div class="label">Aktivnich pozic</div>
-    </div>
-    <div class="stat-card green">
+    </a>
+    <a href="/pozice?filtr=nove_tyden" class="stat-card green" style="text-decoration:none; color:inherit; cursor:pointer;">
         <div class="number">{{ d_stats.nove_tyden }}</div>
         <div class="label">Novych tento tyden</div>
-    </div>
-    <div class="stat-card blue">
+    </a>
+    <a href="/pozice?filtr=aktualizovane" class="stat-card" style="text-decoration:none; color:inherit; cursor:pointer; border:2px solid #dc2626; background:#fef2f2;">
+        <div class="number" style="color:#dc2626;">{{ d_stats.aktualizovane }}</div>
+        <div class="label" style="color:#dc2626;">Aktualizovanych</div>
+    </a>
+    <a href="/pozice?filtr=starnouci" class="stat-card orange" style="text-decoration:none; color:inherit; cursor:pointer;">
+        <div class="number">{{ d_stats.starnouci }}</div>
+        <div class="label">Starnouci (21+ dni)</div>
+    </a>
+    <a href="/pozice?filtr=opakovane" class="stat-card" style="text-decoration:none; color:inherit; cursor:pointer; border:2px solid #7c3aed; background:#faf5ff;">
+        <div class="number" style="color:#7c3aed;">{{ d_stats.opakovane }}</div>
+        <div class="label" style="color:#7c3aed;">Opakovana zadani</div>
+    </a>
+    <a href="/pozice?filtr=problematicke" class="stat-card" style="text-decoration:none; color:inherit; cursor:pointer; border:2px solid #ea580c; background:#fff7ed;">
+        <div class="number" style="color:#ea580c;">{{ d_stats.problematicke }}</div>
+        <div class="label" style="color:#ea580c;">Problematicke (4+ scanu)</div>
+    </a>
+</div>
+
+<div class="stats-row" style="margin-top:-8px;">
+    <a href="/decision-makers" class="stat-card blue" style="text-decoration:none; color:inherit; cursor:pointer;">
         <div class="number">{{ d_stats.dm_total }}</div>
         <div class="label">Decision makers</div>
-    </div>
-    <div class="stat-card orange">
+    </a>
+    <a href="/outreach" class="stat-card" style="text-decoration:none; color:inherit; cursor:pointer;">
         <div class="number">{{ d_stats.outreach_total }}</div>
         <div class="label">Osloveno celkem</div>
-    </div>
-    <div class="stat-card">
-        <div class="number">{{ d_stats.outreach_ceka }}</div>
-        <div class="label">Ceka na odpoved</div>
-    </div>
-    <div class="stat-card green">
-        <div class="number">{{ d_stats.outreach_odpoved }}</div>
-        <div class="label">Pozitivni odpovedi</div>
-    </div>
+    </a>
+    <a href="/firmy" class="stat-card" style="text-decoration:none; color:inherit; cursor:pointer; border:2px solid #6366f1; background:#eef2ff;">
+        <div class="number" style="color:#6366f1;">{{ d_stats.firmy_celkem }}</div>
+        <div class="label" style="color:#6366f1;">Firem celkem</div>
+    </a>
 </div>
 
 <!-- Surge alerts -->
@@ -42,7 +57,7 @@
     <h3 style="color:#ea580c;">Nahly narust pozic tento tyden</h3>
     {% for s in surges %}
     <div style="margin-bottom:8px;">
-        <a class="firma-link" href="/firma/{{ s.firma_norm|default(s.firma|lower) }}">{{ s.firma }}</a>
+        <a class="firma-link" href="/firma/{{ s.firma_norm|default(s.firma|normalize) }}">{{ s.firma }}</a>
         ({{ s.kraj }})
         — <span style="color:#ea580c; font-weight:700;">+{{ s.nove_pozice }} novych pozic</span>
         <br><span class="text-muted">
@@ -153,14 +168,19 @@
 <!-- Quick links -->
 <div class="stats-row" style="margin-top:8px;">
     <div class="card" style="text-align:center; flex:1;">
-        <h3 style="margin-bottom:8px;">Scraper</h3>
-        <p class="text-muted mb-0">Spustit novy scan pozic z jobs.cz</p>
-        <a href="/scraper" class="btn btn-primary btn-sm" style="margin-top:12px;">Otevrit</a>
+        <h3 style="margin-bottom:8px;">Firmy</h3>
+        <p class="text-muted mb-0">Prehled firem dle poctu pozic</p>
+        <a href="/firmy" class="btn btn-primary btn-sm" style="margin-top:12px;">Otevrit</a>
     </div>
     <div class="card" style="text-align:center; flex:1;">
         <h3 style="margin-bottom:8px;">Radar</h3>
-        <p class="text-muted mb-0">Vsechny firmy propojene s DM</p>
+        <p class="text-muted mb-0">Firmy propojene s DM</p>
         <a href="/radar" class="btn btn-primary btn-sm" style="margin-top:12px;">Otevrit</a>
+    </div>
+    <div class="card" style="text-align:center; flex:1;">
+        <h3 style="margin-bottom:8px;">Scraper</h3>
+        <p class="text-muted mb-0">Spustit novy scan pozic</p>
+        <a href="/scraper" class="btn btn-primary btn-sm" style="margin-top:12px;">Otevrit</a>
     </div>
     <div class="card" style="text-align:center; flex:1;">
         <h3 style="margin-bottom:8px;">Batch zpravy</h3>

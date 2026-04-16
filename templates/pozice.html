@@ -1,0 +1,208 @@
+{% extends "_layout.html" %}
+{% set active_page = 'pozice' %}
+{% block title %}{{ titulek }} — Sintera Radar{% endblock %}
+
+{% block content %}
+<div class="main-header">
+    <h1>{{ titulek }}</h1>
+    {% if popisek %}
+    <div class="subtitle">{{ popisek }}</div>
+    {% endif %}
+</div>
+
+<!-- Filter tabs -->
+<div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
+    <a href="/pozice?filtr=nejstarsi" class="btn {% if filtr == 'nejstarsi' %}btn-primary{% else %}btn-outline{% endif %} btn-sm"
+       style="{% if filtr == 'nejstarsi' %}background:#991b1b; border-color:#991b1b;{% endif %}">
+        Nejdele otevrene
+    </a>
+    <a href="/pozice?filtr=aktualizovane" class="btn {% if filtr == 'aktualizovane' %}btn-primary{% else %}btn-outline{% endif %} btn-sm"
+       style="{% if filtr == 'aktualizovane' %}background:#dc2626; border-color:#dc2626;{% endif %}">
+        Aktualizovane
+    </a>
+    <a href="/pozice?filtr=opakovane" class="btn {% if filtr == 'opakovane' %}btn-primary{% else %}btn-outline{% endif %} btn-sm"
+       style="{% if filtr == 'opakovane' %}background:#7c3aed; border-color:#7c3aed;{% endif %}">
+        Opakovana zadani
+    </a>
+    <a href="/pozice?filtr=problematicke" class="btn {% if filtr == 'problematicke' %}btn-primary{% else %}btn-outline{% endif %} btn-sm"
+       style="{% if filtr == 'problematicke' %}background:#ea580c; border-color:#ea580c;{% endif %}">
+        Problematicke (4+ scanu)
+    </a>
+    <a href="/pozice?filtr=starnouci" class="btn {% if filtr == 'starnouci' %}btn-primary{% else %}btn-outline{% endif %} btn-sm"
+       style="{% if filtr == 'starnouci' %}background:#d97706; border-color:#d97706;{% endif %}">
+        Starnouci (21+ dni)
+    </a>
+    <a href="/pozice?filtr=nove_tyden" class="btn {% if filtr == 'nove_tyden' %}btn-primary{% else %}btn-outline{% endif %} btn-sm"
+       style="{% if filtr == 'nove_tyden' %}background:#16a34a; border-color:#16a34a;{% endif %}">
+        Nove tento tyden
+    </a>
+    <a href="/pozice?filtr=aktivni" class="btn {% if filtr == 'aktivni' %}btn-primary{% else %}btn-outline{% endif %} btn-sm">
+        Vsechny aktivni
+    </a>
+</div>
+
+<!-- Sort + filter row -->
+<div style="display:flex; gap:12px; margin-bottom:12px; align-items:center; flex-wrap:wrap;">
+    <span style="color:#64748b; font-size:0.85em; font-weight:600;">Radit:</span>
+    <a href="/pozice?filtr={{ filtr }}{% if kraj %}&kraj={{ kraj }}{% endif %}&sort=stari"
+       class="btn {% if sort == 'stari' or (not sort and filtr in ('nejstarsi','starnouci','problematicke')) %}btn-primary{% else %}btn-outline{% endif %} btn-sm" style="font-size:0.78em;">
+        Dle stari
+    </a>
+    <a href="/pozice?filtr={{ filtr }}{% if kraj %}&kraj={{ kraj }}{% endif %}&sort=firma"
+       class="btn {% if sort == 'firma' %}btn-primary{% else %}btn-outline{% endif %} btn-sm" style="font-size:0.78em;">
+        Dle firmy
+    </a>
+    <a href="/pozice?filtr={{ filtr }}{% if kraj %}&kraj={{ kraj }}{% endif %}&sort=scanu"
+       class="btn {% if sort == 'scanu' %}btn-primary{% else %}btn-outline{% endif %} btn-sm" style="font-size:0.78em;">
+        Dle poctu scanu
+    </a>
+    <span style="color:#ccc;">|</span>
+    <select onchange="window.location='/pozice?filtr={{ filtr }}&sort={{ sort }}&kraj='+this.value"
+            style="padding:4px 8px; border:1.5px solid #d1d5db; border-radius:6px; font-size:0.82em;">
+        <option value="">Vsechny kraje</option>
+        {% for kod, (nazev, slug) in kraje.items() %}
+        <option value="{{ nazev }}" {% if kraj == nazev %}selected{% endif %}>{{ nazev }}</option>
+        {% endfor %}
+    </select>
+</div>
+
+<!-- Results count -->
+<div style="margin-bottom:12px; color:#64748b; font-size:0.9em;">
+    Zobrazeno <strong>{{ rows|length }}</strong> pozic (bez agentur)
+    {% if kraj %} v regionu <strong>{{ kraj }}</strong>{% endif %}
+</div>
+
+<!-- Results table -->
+<div class="card" style="padding:0; overflow-x:auto;">
+<table style="margin:0;">
+    <thead>
+        <tr>
+            <th>Firma</th>
+            <th>Pozice</th>
+            <th>Kraj</th>
+            <th>Stari</th>
+            <th>Scanu</th>
+            {% if filtr in ('problematicke', 'nejstarsi', 'starnouci', 'aktivni', '') %}
+            <th>Duvod</th>
+            {% endif %}
+            {% if filtr == 'opakovane' %}
+            <th>Predchozi od</th>
+            {% endif %}
+            <th>O firme</th>
+            <th>Plat</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in rows %}
+        <tr style="{% if r.publikovano and 'ktualizov' in r.publikovano %}background:#fef2f2;{% elif r.pocet_scanu >= 4 and r.dni_aktivni and r.dni_aktivni > 30 %}background:#fff7ed;{% endif %}">
+            <td>
+                <a class="firma-link" href="/firma/{{ r.firma|normalize }}">
+                    <strong>{{ r.firma }}</strong>
+                </a>
+            </td>
+            <td>
+                {% if r.url %}
+                <a href="{{ r.url }}" target="_blank" style="color:#4338ca; text-decoration:none;">
+                    {{ r.pozice }}
+                </a>
+                {% else %}
+                {{ r.pozice }}
+                {% endif %}
+            </td>
+            <td style="font-size:0.85em;">{{ r.kraj }}</td>
+            <td>
+                {% if r.dni_aktivni is not none %}
+                    {% if r.dni_aktivni > 45 %}
+                    <span style="background:#fef2f2; color:#dc2626; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600;">
+                        {{ r.dni_aktivni }}d
+                    </span>
+                    {% elif r.dni_aktivni > 21 %}
+                    <span style="background:#fff7ed; color:#ea580c; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600;">
+                        {{ r.dni_aktivni }}d
+                    </span>
+                    {% elif r.dni_aktivni > 7 %}
+                    <span style="background:#fefce8; color:#a16207; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600;">
+                        {{ r.dni_aktivni }}d
+                    </span>
+                    {% else %}
+                    <span style="color:#64748b;">{{ r.dni_aktivni }}d</span>
+                    {% endif %}
+                {% else %}
+                —
+                {% endif %}
+            </td>
+            <td>
+                {% if r.pocet_scanu >= 6 %}
+                <span style="color:#dc2626; font-weight:700;">{{ r.pocet_scanu }}x</span>
+                {% elif r.pocet_scanu >= 4 %}
+                <span style="color:#ea580c; font-weight:700;">{{ r.pocet_scanu }}x</span>
+                {% else %}
+                <span style="color:#64748b;">{{ r.pocet_scanu }}x</span>
+                {% endif %}
+            </td>
+            {% if filtr in ('problematicke', 'nejstarsi', 'starnouci', 'aktivni', '') %}
+            <td style="font-size:0.78em;">
+                {% if r.publikovano and 'ktualizov' in r.publikovano %}
+                <span style="background:#fef2f2; color:#dc2626; padding:1px 6px; border-radius:8px; font-weight:600;">Aktualizovano</span>
+                {% endif %}
+                {% if r.predchozi_job_id %}
+                <span style="background:#faf5ff; color:#7c3aed; padding:1px 6px; border-radius:8px; font-weight:600;">Opakovane</span>
+                {% endif %}
+                {% if r.pocet_scanu >= 4 %}
+                <span style="background:#fff7ed; color:#ea580c; padding:1px 6px; border-radius:8px; font-weight:600;">{{ r.pocet_scanu }}x videno</span>
+                {% endif %}
+                {% if r.dni_aktivni and r.dni_aktivni > 21 and not r.pocet_scanu >= 4 and not r.predchozi_job_id %}
+                <span style="background:#fefce8; color:#a16207; padding:1px 6px; border-radius:8px; font-weight:600;">{{ r.dni_aktivni }}d otevrena</span>
+                {% endif %}
+            </td>
+            {% endif %}
+            {% if filtr == 'opakovane' %}
+            <td>
+                {% if r.predchozi_datum_prvni %}
+                <span style="color:#7c3aed; font-size:0.85em;">{{ r.predchozi_datum_prvni[:10] }}</span>
+                {% else %}
+                —
+                {% endif %}
+            </td>
+            {% endif %}
+            <td style="font-size:0.75em; white-space:nowrap;">
+                {% if r.firma_pozic is defined and r.firma_pozic %}
+                <span style="color:#6366f1; font-weight:600;">{{ r.firma_pozic }} pozic</span>
+                {% if r.firma_aktual > 0 %}
+                <br><span style="color:#dc2626;">{{ r.firma_aktual }} aktual.</span>
+                {% endif %}
+                {% if r.firma_opak > 0 %}
+                <br><span style="color:#7c3aed;">{{ r.firma_opak }} opak.</span>
+                {% endif %}
+                {% if r.firma_probl > 0 %}
+                <br><span style="color:#ea580c;">{{ r.firma_probl }} probl.</span>
+                {% endif %}
+                {% endif %}
+            </td>
+            <td style="font-size:0.85em;">{{ r.plat_text or '—' }}</td>
+            <td>
+                {% if r.url %}
+                <a href="{{ r.url }}" target="_blank" class="btn btn-outline btn-sm" style="font-size:11px;">
+                    jobs.cz
+                </a>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        {% if not rows %}
+        <tr>
+            <td colspan="10" style="text-align:center; padding:30px; color:#94a3b8;">
+                Zadne pozice pro tento filtr.
+            </td>
+        </tr>
+        {% endif %}
+    </tbody>
+</table>
+</div>
+
+<div style="margin-top:12px; display:flex; gap:8px;">
+    <a href="/" class="btn btn-outline btn-sm">Zpet na dashboard</a>
+    <a href="/firmy" class="btn btn-outline btn-sm">Prehled firem</a>
+</div>
+{% endblock %}
