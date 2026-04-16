@@ -1416,6 +1416,32 @@ def filtr_pozice(filtr: str = "", kraj: str = "", limit: int = 500,
                     p["firma_probl"] = fs.get("firma_probl", 0)
                     p["firma_aktual"] = fs.get("firma_aktual", 0)
 
+            # Enrich: decision maker availability (batch)
+            norms = list({normalize_company(f) for f in firms})
+            if norms:
+                ph2 = ",".join("?" * len(norms))
+                dm_norms_found = {r[0] for r in conn.execute(
+                    f"SELECT DISTINCT company_normalized FROM decision_makers "
+                    f"WHERE company_normalized IN ({ph2})", norms
+                ).fetchall()}
+                # Also check substring matches for firms not found exactly
+                if len(dm_norms_found) < len(norms):
+                    all_dm_norms = [r[0] for r in conn.execute(
+                        "SELECT DISTINCT company_normalized FROM decision_makers "
+                        "WHERE current_company != ''"
+                    ).fetchall()]
+                    for n in norms:
+                        if n in dm_norms_found:
+                            continue
+                        if len(n) >= 4:
+                            for dn in all_dm_norms:
+                                if len(dn) >= 4 and (n in dn or dn in n):
+                                    dm_norms_found.add(n)
+                                    break
+
+                for p in positions:
+                    p["has_dm"] = normalize_company(p["firma"]) in dm_norms_found
+
     return positions
 
 

@@ -27,6 +27,12 @@
     .btn-dm { background: #6366f1; color: #fff; border: none; padding: 3px 10px;
               border-radius: 5px; font-size: 0.75em; cursor: pointer; font-weight: 600; }
     .btn-dm:hover { background: #4f46e5; }
+    .btn-dm-no { background: #e2e2e2; color: #999; cursor: default; }
+    .btn-dm-no:hover { background: #e2e2e2; }
+    .dm-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+              margin-right: 3px; vertical-align: middle; }
+    .dm-dot-yes { background: #22c55e; }
+    .dm-dot-no { background: #d1d5db; }
 </style>
 {% endblock %}
 
@@ -215,9 +221,15 @@
                     jobs.cz
                 </a>
                 {% endif %}
+                {% if r.has_dm %}
                 <button class="btn-dm" onclick="toggleDM({{ loop.index }}, '{{ r.firma|e }}', '{{ r.pozice|e }}', '{{ r.kraj|e }}')">
-                    Zprava
+                    <span class="dm-dot dm-dot-yes"></span>Zprava
                 </button>
+                {% else %}
+                <span class="btn-dm btn-dm-no" title="Decision maker nenalezen">
+                    <span class="dm-dot dm-dot-no"></span>Bez DM
+                </span>
+                {% endif %}
             </td>
         </tr>
         <!-- DM panel row (hidden, expands on click) -->
