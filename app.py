@@ -5,9 +5,11 @@ import csv
 import dataclasses
 import io
 import json
+import os
 import threading
 import uuid
 from datetime import datetime
+from functools import wraps
 
 from flask import Flask, render_template, request, Response, jsonify, redirect, url_for
 from scraper import scrape, scrape_vsechny_kraje, KRAJE, OBORY, UVAZKY, HOME_OFFICE
@@ -17,10 +19,55 @@ from database import (init_db, uloz_nabidky, nacti_nabidky, statistiky, exportuj
                        add_company_alias, add_outreach, update_outreach_status,
                        nacti_outreach, outreach_statistiky, OUTREACH_STATUSES,
                        radar_doporuceni, detect_surge, generate_batch_messages,
-                       normalize_company, firma_detail, dashboard_stats)
+                       normalize_company, firma_detail, dashboard_stats,
+                       filtr_pozice, firmy_prehled)
 
 app = Flask(__name__)
 init_db()
+
+# Register normalize_company as Jinja filter so templates can build correct URLs
+app.jinja_env.filters["normalize"] = normalize_company
+
+# ── Basic Authentication ────────────────────────────────────────────────────
+AUTH_USER = os.environ.get("AUTH_USER", "")
+AUTH_PASS = os.environ.get("AUTH_PASS", "")
+
+
+def check_auth(username, password):
+    return username == AUTH_USER and password == AUTH_PASS
+
+
+def requires_auth(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not AUTH_USER:  # No auth configured = no protection (local dev)
+            return f(*args, **kwargs)
+        auth = request.authorization
+        if not auth or not check_auth(auth.username, auth.password):
+            return Response(
+                "Pristup odepren. Zadejte prihlasovaci udaje.",
+                401,
+                {"WWW-Authenticate": 'Basic realm="Sintera Radar"'},
+            )
+        return f(*args, **kwargs)
+    return decorated
+
+
+@app.before_request
+def auth_guard():
+    """Protect all routes with basic auth when configured."""
+    if not AUTH_USER:
+        return  # No auth configured
+    if request.endpoint and request.endpoint == "static":
+        return  # Allow static files
+    auth = request.authorization
+    if not auth or not check_auth(auth.username, auth.password):
+        return Response(
+            "Pristup odepren. Zadejte prihlasovaci udaje.",
+            401,
+            {"WWW-Authenticate": 'Basic realm="Sintera Radar"'},
+        )
+
 
 # ── Správa úloh (background scraping) ────────────────────────────────────────
 # job = {status, zprava, celkem, kraj_index, kraj_total, nabidky, db_stats, chyba, started}
@@ -114,6 +161,50 @@ def dashboard():
                            kraje=KRAJE)
 
 
+@app.route("/pozice")
+def pozice_page():
+    filtr = request.args.get("filtr", "")
+    kraj = request.args.get("kraj", "")
+    sort = request.args.get("sort", "")
+    rows = filtr_pozice(filtr=filtr, kraj=kraj, limit=500, sort=sort)
+
+    titulky = {
+        "aktualizovane": "Aktualizovane pozice",
+        "starnouci": "Starnouci pozice (21+ dni)",
+        "nove_tyden": "Nove pozice tento tyden",
+        "aktivni": "Vsechny aktivni pozice",
+        "opakovane": "Opakovana zadani",
+        "problematicke": "Problematicke pozice (4+ scanu)",
+        "nejstarsi": "Nejdele otevrene pozice",
+    }
+    popisky = {
+        "aktualizovane": "Pozice oznacene jako Aktualizovano na jobs.cz - firma hledala, nenasla, a obnovila inzerat. Nejsilnejsi signal pro osloveni.",
+        "starnouci": "Pozice otevrene dele nez 3 tydny. Firma pravdepodobne nema kapacitu obsadit pozici sama.",
+        "nove_tyden": "Pozice pridane v poslednich 7 dnech.",
+        "aktivni": "Vsechny aktualne aktivni pozice na jobs.cz.",
+        "opakovane": "Firma zadala stejnou pozici opakovane - predchozi inzerat zanikl a znovuotevreli. Signal ze neumi obsadit.",
+        "problematicke": "Pozice videne ve 4 a vice scanech - firma je dlouhodobe neobsazuje.",
+        "nejstarsi": "Vsechny pozice serazene od nejdele otevrenych. Cim dele otevrena, tim vetsi pravdepodobnost ze firma potrebuje pomoc.",
+    }
+
+    return render_template("pozice.html",
+                           rows=rows, filtr=filtr, kraj=kraj, sort=sort,
+                           titulek=titulky.get(filtr, "Pozice"),
+                           popisek=popisky.get(filtr, ""),
+                           kraje=KRAJE)
+
+
+@app.route("/firmy")
+def firmy_page():
+    sort = request.args.get("sort", "pozic")
+    page = int(request.args.get("page", 1))
+    kraj = request.args.get("kraj", "")
+    data = firmy_prehled(sort=sort, page=page, per_page=50, kraj=kraj)
+    return render_template("firmy.html",
+                           data=data, sort=sort, page=page, kraj=kraj,
+                           kraje=KRAJE)
+
+
 @app.route("/scraper")
 def scraper_page():
     stats = statistiky()
@@ -135,6 +226,11 @@ def hledat():
     do_db      = "do_db" in request.form
 
     vse_kraje = (kraj_kod == "vse")
+    # "Celá ČR" (prázdný kraj) → automaticky přepnout na per-region mód,
+    # protože jobs.cz /prace/ bez regionu vrací JS-only stránku (0 výsledků)
+    # a navíc jeden dotaz je limitovaný na 1 350 výsledků.
+    if not kraj_kod:
+        vse_kraje = True
     if not vse_kraje and kraj_kod:
         kraj_nazev, kraj_slug = KRAJE.get(kraj_kod, ("Celá ČR", ""))
     else:
@@ -316,10 +412,10 @@ def add_dm():
 
 @app.route("/radar")
 def radar_page():
-    result = radar_matches()
+    result = radar_matches(skip_fuzzy=True)
     dm_stats = dm_statistiky()
     surges = detect_surge(threshold=4)
-    recommendations = radar_doporuceni(per_region=3)
+    recommendations = radar_doporuceni(per_region=3, skip_fuzzy=True)
     o_stats = outreach_statistiky()
     return render_template("radar.html",
                            kraje=KRAJE, result=result, dm_stats=dm_stats,
@@ -422,4 +518,7 @@ def batch_page():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5001, threaded=True)
+    import os
+    host = os.environ.get("FLASK_HOST", "127.0.0.1")
+    debug = os.environ.get("FLASK_ENV") != "production"
+    app.run(host=host, debug=debug, port=5001, threaded=True)

@@ -1,0 +1,146 @@
+{% extends "_layout.html" %}
+{% set active_page = 'firmy' %}
+{% block title %}Firmy — Sintera Radar{% endblock %}
+
+{% block content %}
+<div class="main-header">
+    <h1>Prehled firem</h1>
+    <div class="subtitle">{{ data.total }} firem s aktivnimi pozicemi (bez agentur)</div>
+</div>
+
+<!-- Sort tabs -->
+<div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; align-items:center;">
+    <span style="color:#64748b; font-size:0.85em; font-weight:600;">Radit podle:</span>
+    <a href="/firmy?sort=pozic{% if kraj %}&kraj={{ kraj }}{% endif %}"
+       class="btn {% if sort == 'pozic' %}btn-primary{% else %}btn-outline{% endif %} btn-sm">
+        Poctu pozic
+    </a>
+    <a href="/firmy?sort=opakovane{% if kraj %}&kraj={{ kraj }}{% endif %}"
+       class="btn {% if sort == 'opakovane' %}btn-primary{% else %}btn-outline{% endif %} btn-sm"
+       style="{% if sort == 'opakovane' %}background:#7c3aed; border-color:#7c3aed;{% endif %}">
+        Opakovanych zadani
+    </a>
+    <a href="/firmy?sort=problematicke{% if kraj %}&kraj={{ kraj }}{% endif %}"
+       class="btn {% if sort == 'problematicke' %}btn-primary{% else %}btn-outline{% endif %} btn-sm"
+       style="{% if sort == 'problematicke' %}background:#ea580c; border-color:#ea580c;{% endif %}">
+        Problematickych pozic
+    </a>
+    <a href="/firmy?sort=firma{% if kraj %}&kraj={{ kraj }}{% endif %}"
+       class="btn {% if sort == 'firma' %}btn-primary{% else %}btn-outline{% endif %} btn-sm">
+        Abecedne
+    </a>
+</div>
+
+<!-- Region filter -->
+<div style="margin-bottom:16px;">
+    <select onchange="window.location='/firmy?sort={{ sort }}&kraj='+this.value" style="padding:6px 12px; border:1.5px solid #d1d5db; border-radius:7px; font-size:0.88rem;">
+        <option value="">Vsechny kraje</option>
+        {% for kod, (nazev, slug) in kraje.items() %}
+        <option value="{{ nazev }}" {% if kraj == nazev %}selected{% endif %}>{{ nazev }}</option>
+        {% endfor %}
+    </select>
+</div>
+
+<!-- Company table -->
+<div class="card" style="padding:0; overflow-x:auto;">
+<table style="margin:0;">
+    <thead>
+        <tr>
+            <th>#</th>
+            <th>Firma</th>
+            <th>Kraje</th>
+            <th style="text-align:right;">Pozic</th>
+            <th style="text-align:right;">Opakovanych</th>
+            <th style="text-align:right;">Problematickych</th>
+            <th style="text-align:right;">Max scanu</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for f in data.firmy %}
+        <tr>
+            <td class="text-muted">{{ (data.page - 1) * 50 + loop.index }}</td>
+            <td>
+                <a class="firma-link" href="/firma/{{ f.firma_norm }}">
+                    <strong>{{ f.firma }}</strong>
+                </a>
+            </td>
+            <td style="font-size:0.8em; color:#64748b; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                {{ f.kraje }}
+            </td>
+            <td style="text-align:right;"><strong>{{ f.pocet_pozic }}</strong></td>
+            <td style="text-align:right;">
+                {% if f.opakovanych > 0 %}
+                <span style="background:#faf5ff; color:#7c3aed; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600;">
+                    {{ f.opakovanych }}
+                </span>
+                {% else %}
+                <span class="text-muted">0</span>
+                {% endif %}
+            </td>
+            <td style="text-align:right;">
+                {% if f.problematickych > 0 %}
+                <span style="background:#fff7ed; color:#ea580c; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600;">
+                    {{ f.problematickych }}
+                </span>
+                {% else %}
+                <span class="text-muted">0</span>
+                {% endif %}
+            </td>
+            <td style="text-align:right;">
+                {% if f.max_scanu >= 4 %}
+                <span style="color:#dc2626; font-weight:700;">{{ f.max_scanu }}x</span>
+                {% else %}
+                <span class="text-muted">{{ f.max_scanu }}x</span>
+                {% endif %}
+            </td>
+            <td>
+                <a href="/firma/{{ f.firma_norm }}" class="btn btn-outline btn-sm" style="font-size:11px;">Detail</a>
+            </td>
+        </tr>
+        {% endfor %}
+        {% if not data.firmy %}
+        <tr>
+            <td colspan="8" style="text-align:center; padding:30px; color:#94a3b8;">
+                Zadne firmy.
+            </td>
+        </tr>
+        {% endif %}
+    </tbody>
+</table>
+</div>
+
+<!-- Pagination -->
+{% if data.pages > 1 %}
+<div style="display:flex; gap:8px; align-items:center; margin-top:16px; flex-wrap:wrap;">
+    {% if data.page > 1 %}
+    <a href="/firmy?sort={{ sort }}&page={{ data.page - 1 }}{% if kraj %}&kraj={{ kraj }}{% endif %}"
+       class="btn btn-outline btn-sm">Predchozi</a>
+    {% endif %}
+
+    {% for p in range(1, data.pages + 1) %}
+        {% if p == data.page %}
+        <span class="btn btn-primary btn-sm">{{ p }}</span>
+        {% elif p <= 3 or p >= data.pages - 1 or (p >= data.page - 1 and p <= data.page + 1) %}
+        <a href="/firmy?sort={{ sort }}&page={{ p }}{% if kraj %}&kraj={{ kraj }}{% endif %}"
+           class="btn btn-outline btn-sm">{{ p }}</a>
+        {% elif p == 4 or p == data.pages - 2 %}
+        <span class="text-muted">...</span>
+        {% endif %}
+    {% endfor %}
+
+    {% if data.page < data.pages %}
+    <a href="/firmy?sort={{ sort }}&page={{ data.page + 1 }}{% if kraj %}&kraj={{ kraj }}{% endif %}"
+       class="btn btn-outline btn-sm">Dalsi</a>
+    {% endif %}
+
+    <span class="text-muted" style="margin-left:8px; font-size:0.85em;">
+        Strana {{ data.page }} z {{ data.pages }} ({{ data.total }} firem)
+    </span>
+</div>
+{% endif %}
+
+<div style="margin-top:12px;">
+    <a href="/" class="btn btn-outline btn-sm">Zpet na dashboard</a>
+</div>
+{% endblock %}

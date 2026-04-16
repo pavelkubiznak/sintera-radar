@@ -1,5 +1,5 @@
 {% extends "_layout.html" %}
-{% set active_page = 'radar' %}
+{% set active_page = 'pozice' %}
 {% block title %}{{ detail.firma }} — Sintera Radar{% endblock %}
 
 {% block extra_css %}
@@ -21,6 +21,12 @@
     .scans-high { color: #dc2626; font-weight: 700; }
     .scans-med  { color: #d97706; font-weight: 700; }
     .scans-low  { color: #059669; }
+
+    .flag-badge { display: inline-block; padding: 2px 8px; border-radius: 8px;
+                  font-size: 0.75em; font-weight: 600; margin: 1px 0; cursor: help; }
+    .flag-reason { font-size: 0.78em; color: #666; margin-top: 3px; line-height: 1.3; }
+
+    .signal-box { border-radius: 10px; padding: 12px 16px; margin-bottom: 8px; }
 
     .dm-card-detail { background: #f8f7ff; border-radius: 10px; padding: 14px 18px;
                       margin-bottom: 10px; border: 1px solid #e8e5ff; }
@@ -45,7 +51,9 @@
 {% block content %}
 <!-- Breadcrumb -->
 <div style="margin-bottom: 16px; font-size: 0.85em;">
-    <a href="/radar" style="color: #6366f1; text-decoration: none;">Radar</a>
+    <a href="/" style="color: #6366f1; text-decoration: none;">Dashboard</a>
+    <span style="color: #ccc; margin: 0 6px;">/</span>
+    <a href="/pozice?filtr=aktivni" style="color: #6366f1; text-decoration: none;">Pozice</a>
     <span style="color: #ccc; margin: 0 6px;">/</span>
     <span style="color: #888;">{{ detail.firma }}</span>
 </div>
@@ -62,17 +70,48 @@
             {% endif %}
         </div>
     </div>
-    <div class="gap-sm">
-        <span class="stat-card purple" style="padding: 10px 16px;">
+    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <span class="stat-card purple" style="padding: 10px 16px; min-width:80px; text-align:center;">
             <span class="number" style="font-size: 1.3em;">{{ detail.pocet_aktivni }}</span>
             <span class="label">Aktivnich</span>
         </span>
-        <span class="stat-card" style="padding: 10px 16px;">
-            <span class="number" style="font-size: 1.3em; color: #888;">{{ detail.pocet_neaktivni }}</span>
+        {% if detail.cnt_aktualizovano %}
+        <span class="stat-card" style="padding:10px 16px; min-width:80px; text-align:center; border:2px solid #dc2626; background:#fef2f2;">
+            <span class="number" style="font-size:1.3em; color:#dc2626;">{{ detail.cnt_aktualizovano }}</span>
+            <span class="label" style="color:#dc2626;">Aktualiz.</span>
+        </span>
+        {% endif %}
+        {% if detail.cnt_opakovane %}
+        <span class="stat-card" style="padding:10px 16px; min-width:80px; text-align:center; border:2px solid #7c3aed; background:#faf5ff;">
+            <span class="number" style="font-size:1.3em; color:#7c3aed;">{{ detail.cnt_opakovane }}</span>
+            <span class="label" style="color:#7c3aed;">Opakov.</span>
+        </span>
+        {% endif %}
+        {% if detail.cnt_problematicke %}
+        <span class="stat-card" style="padding:10px 16px; min-width:80px; text-align:center; border:2px solid #ea580c; background:#fff7ed;">
+            <span class="number" style="font-size:1.3em; color:#ea580c;">{{ detail.cnt_problematicke }}</span>
+            <span class="label" style="color:#ea580c;">Probl.</span>
+        </span>
+        {% endif %}
+        <span class="stat-card" style="padding:10px 16px; min-width:80px; text-align:center;">
+            <span class="number" style="font-size:1.3em; color:#888;">{{ detail.pocet_neaktivni }}</span>
             <span class="label">Neaktivnich</span>
         </span>
     </div>
 </div>
+
+<!-- Signal summary -->
+{% if detail.signals %}
+<div class="signal-box" style="background:#fef2f2; border:1.5px solid #fca5a5; margin-bottom:20px;">
+    <strong style="color:#dc2626;">Signaly:</strong>
+    <span style="color:#666;">
+        {{ detail.signals|join(' · ') }}
+        {% if detail.max_days > 30 %}
+        · nejdelsi pozice otevrena {{ detail.max_days }} dni
+        {% endif %}
+    </span>
+</div>
+{% endif %}
 
 <div class="detail-grid">
     <!-- LEFT: Positions -->
@@ -87,37 +126,62 @@
                     <tr>
                         <th>Pozice</th>
                         <th>Kraj</th>
+                        <th>Stari</th>
+                        <th>Scanu</th>
                         <th>Plat</th>
-                        <th>Skenu</th>
-                        <th>Od</th>
+                        <th>Signaly a duvody</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for p in detail.pozice_aktivni %}
-                    <tr>
+                    <tr style="{% if p.flags %}border-left: 3px solid {{ p.flags[0].barva }};{% endif %}">
                         <td>
-                            <a href="{{ p.url }}" target="_blank" style="color:#6366f1; text-decoration:none; font-weight:600;">
+                            {% if p.url %}
+                            <a href="{{ p.url }}" target="_blank" style="color:#4338ca; text-decoration:none; font-weight:600;">
                                 {{ p.pozice }}
                             </a>
-                            {% if p.predchozi_job_id %}
-                            <span class="signal signal-red" style="margin-left:4px;">OPAKOVANE</span>
+                            {% else %}
+                            <strong>{{ p.pozice }}</strong>
                             {% endif %}
-                            {% if p.obor %}<br><span class="text-muted">{{ p.obor }}</span>{% endif %}
+                            {% if p.obor %}<br><span class="text-muted" style="font-size:0.82em;">{{ p.obor }}</span>{% endif %}
                         </td>
-                        <td>{{ p.kraj }}</td>
+                        <td style="font-size:0.85em;">{{ p.kraj }}</td>
+                        <td>
+                            {% if p.dni_aktivni is not none %}
+                                {% if p.dni_aktivni > 45 %}
+                                <span style="background:#fef2f2; color:#dc2626; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600;">
+                                    {{ p.dni_aktivni }}d
+                                </span>
+                                {% elif p.dni_aktivni > 21 %}
+                                <span style="background:#fff7ed; color:#ea580c; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600;">
+                                    {{ p.dni_aktivni }}d
+                                </span>
+                                {% else %}
+                                <span style="color:#64748b;">{{ p.dni_aktivni }}d</span>
+                                {% endif %}
+                            {% endif %}
+                        </td>
+                        <td class="{% if p.pocet_scanu >= 6 %}scans-high{% elif p.pocet_scanu >= 4 %}scans-med{% else %}scans-low{% endif %}">
+                            {{ p.pocet_scanu }}x
+                        </td>
                         <td>
                             {% if p.plat_text %}
                             <span style="background:#d1fae5; color:#065f46; font-size:0.78em; font-weight:600;
-                                         padding:2px 8px; border-radius:6px;">{{ p.plat_text }}</span>
+                                         padding:2px 8px; border-radius:6px; white-space:nowrap;">{{ p.plat_text }}</span>
                             {% endif %}
                         </td>
-                        <td class="{% if p.pocet_scanu >= 8 %}scans-high{% elif p.pocet_scanu >= 5 %}scans-med{% else %}scans-low{% endif %}">
-                            {{ p.pocet_scanu }}x
-                        </td>
-                        <td class="text-muted" style="white-space:nowrap;">
-                            {{ p.datum_vydani if p.datum_vydani else p.datum_prvni_scan[:10] }}
-                            {% if p.predchozi_datum_prvni %}
-                            <br><span style="font-size:0.8em; color:#dc2626;">1. pokus: {{ p.predchozi_datum_prvni[:10] }}</span>
+                        <td style="max-width:260px;">
+                            {% if p.flags %}
+                                {% for flag in p.flags %}
+                                <div style="margin-bottom:4px;">
+                                    <span class="flag-badge" style="color:{{ flag.barva }}; background:{{ flag.bg }};">
+                                        {{ flag.text }}
+                                    </span>
+                                    <div class="flag-reason">{{ flag.duvod }}</div>
+                                </div>
+                                {% endfor %}
+                            {% else %}
+                            <span class="text-muted" style="font-size:0.82em;">Bez specialniho signalu</span>
                             {% endif %}
                         </td>
                     </tr>
@@ -133,6 +197,7 @@
         <details class="card" style="cursor:pointer;">
             <summary style="font-weight:600; font-size:1.05em;">
                 Neaktivni pozice ({{ detail.pozice_neaktivni|length }})
+                <span class="text-muted" style="font-weight:400; font-size:0.85em;">— drive vypsane, jiz neaktivni</span>
             </summary>
             <div style="overflow-x: auto; margin-top:12px;">
             <table class="pozice-table pozice-inactive">
@@ -141,17 +206,22 @@
                         <th>Pozice</th>
                         <th>Kraj</th>
                         <th>Plat</th>
-                        <th>Skenu</th>
+                        <th>Scanu</th>
                         <th>Obdobi</th>
+                        <th>Signaly</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for p in detail.pozice_neaktivni %}
                     <tr>
                         <td>
+                            {% if p.url %}
                             <a href="{{ p.url }}" target="_blank" style="color:#888; text-decoration:none;">
                                 {{ p.pozice }}
                             </a>
+                            {% else %}
+                            {{ p.pozice }}
+                            {% endif %}
                         </td>
                         <td>{{ p.kraj }}</td>
                         <td>
@@ -160,8 +230,15 @@
                             {% endif %}
                         </td>
                         <td>{{ p.pocet_scanu }}x</td>
-                        <td class="text-muted" style="white-space:nowrap;">
-                            {{ p.datum_prvni_scan[:10] }} — {{ p.datum_posledni_scan[:10] }}
+                        <td class="text-muted" style="white-space:nowrap; font-size:0.85em;">
+                            {{ p.datum_prvni_scan[:10] }} - {{ p.datum_posledni_scan[:10] }}
+                        </td>
+                        <td>
+                            {% for flag in p.flags %}
+                            <span class="flag-badge" style="color:{{ flag.barva }}; background:{{ flag.bg }};">
+                                {{ flag.text }}
+                            </span>
+                            {% endfor %}
                         </td>
                     </tr>
                     {% endfor %}
@@ -242,6 +319,11 @@
             {% endif %}
         </div>
     </div>
+</div>
+
+<div style="margin-top:16px;">
+    <a href="javascript:history.back()" class="btn btn-outline btn-sm">Zpet</a>
+    <a href="/firmy" class="btn btn-outline btn-sm">Vsechny firmy</a>
 </div>
 {% endblock %}
 

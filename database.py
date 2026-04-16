@@ -23,6 +23,152 @@ from typing import Optional
 
 DB_PATH = Path(__file__).parent / "data" / "jobs.db"
 
+# ── Agency blacklist — built lazily after normalize_company is defined ────────
+_AGENCY_RAW = [
+    # ── Major international agencies ──
+    "PŘEDVÝBĚR.CZ a.s.",
+    "ManpowerGroup s.r.o.",
+    "ProfesKontakt, s.r.o.",
+    "Advantage Consulting, s.r.o.",
+    "Jobs Contact Personal, s.r.o.",
+    "Prušák Group s.r.o.",
+    "mBlue Czech, s.r.o.",
+    "Grafton Recruitment s.r.o.",
+    "HOFMANN WIZARD s.r.o.",
+    "ADECCO spol.s r.o.",
+    "Randstad HR Solutions s.r.o.",
+    "REED SPECIALIST RECRUITMENT",
+    "Trenkwalder a.s.",
+    "Axial Personnel Agency, s.r.o.",
+    "JISTU recruitment s.r.o.",
+    "LD Human Resources s.r.o.",
+    "Manuvia a.s.",
+    "Hays Czech Republic, a.s.",
+    "Kelly Services Temporary Staffing",
+    "Michael Page",
+    "Robert Half",
+    "Robert Walters",
+    "Experis",
+    "Devire s.r.o.",
+    "Goodcall",
+    "Talent Solution s.r.o.",
+    "McROY Czech",
+    "LMC s.r.o.",
+    "YBN Consult",
+    "Euro Personnel",
+    "TSR Czech Republic s.r.o.",
+    # ── Czech HR/staffing agencies ──
+    "Talentor Advanced Search",
+    "People Consulting s.r.o.",
+    "Bright HR, s.r.o.",
+    "ADVANCE HR,s.r.o.",
+    "Brněnská personalistika, spol. s r.o.",
+    "SBR Recruiting",
+    "LEPŠÍ PRÁCE support s.r.o.",
+    "HR PROfi",
+    "HR Direct s.r.o.",
+    "ISG Personalmanagement s.r.o.",
+    "ISG Personalmanagement GmbH",
+    "Solutions HR Specialists, s.r.o.",
+    "TEMPO TRAINING & CONSULTING, a.s.",
+    "CIS interim s.r.o.",
+    "ETHIC HR, s.r.o.",
+    "Employment Express, s.r.o.",
+    "BeeClever HR s.r.o.",
+    "HR Advisors CZ s.r.o.",
+    "Consulta HR s.r.o.",
+    "HR LEAN Solutions, s.r.o.",
+    "Human Garden s.r.o.",
+    "iRecruit, s.r.o.",
+    "Talentem s.r.o.",
+    "Talentica s.r.o.",
+    "Talentinno s.r.o.",
+    "Career Power, s.r.o.",
+    "PersON Solutions s.r.o.",
+    "Personality HR Consulting, s.r.o.",
+    "Agentura Top Talent, s. r. o.",
+    "PRÁCE plus, s.r.o.",
+    "NonStop Consulting s.r.o.",
+    "Alma Career Czechia s.r.o.",
+    "ANEX personální agentura",
+    "Arthur Hunt Consulting s.r.o.",
+    "HOFÍREK CONSULTING",
+    "AVENUE Consulting",
+    "Livio consulting s.r.o.",
+    "INVENT HR Consulting, s.r.o.",
+    "Mardorm Consult s.r.o.",
+    "BARTON Consulting s.r.o.",
+    "BREDFORD Consulting, s.r.o.",
+    "Neit Consulting s.r.o.",
+    "OAKS Consulting s.r.o.",
+    "Greyson Consulting s.r.o.",
+    "Menkyna & Partners Management Consulting, s.r.o.",
+    "INIZIO Internet Media s.r.o.",
+    "INDEX NOSLUŠ s.r.o.",
+    "Proveon, a.s.",
+    "DRILL Business Services",
+    "GHS Consulting s.r.o.",
+    "ŽOLÍKOVÁ PRÁCE s.r.o.",
+    "stálýNÁJEM.CZ",
+    "Swiss Life Select",
+]
+
+AGENCY_KEYWORDS = [
+    # English patterns
+    "recruitment", "recruiting", "personnel", "staffing",
+    "headhunt", "manpower", "adecco", "randstad", "grafton",
+    "trenkwalder", "hofmann wizard", "hays ",
+    "kelly services", "michael page", "robert half",
+    "robert walters", "předvýběr", "profeskontakt", "manuvia",
+    "jistu", "axial personnel",
+    # Czech HR/staffing patterns
+    "personální", "personalistik", "personalmanagement",
+    # Targeted company-word patterns (avoids false positives with cities)
+    "hr consulting", "hr specialist", "hr solution", "hr advisor",
+    "hr direct", "hr lean", "hr profi",
+    "bright hr", "advance hr", "ethic hr", "beeclever hr",
+    "consulta hr",
+    # Staffing/recruitment specific
+    "talentor", "irecruit", "výběrovka",
+    "lepší práce", "žolíkov",
+    "employment express",
+]
+
+_agency_norms: set = set()  # populated on first call to is_agency()
+
+
+def is_agency(firma: str) -> bool:
+    """Check if a company name matches known agency patterns."""
+    global _agency_norms
+    if not firma:
+        return False
+    # Lazy init: build normalized set on first call
+    if not _agency_norms:
+        _agency_norms = {normalize_company(r) for r in _AGENCY_RAW}
+    norm = normalize_company(firma)
+    if norm in _agency_norms:
+        return True
+    lower = firma.lower()
+    for kw in AGENCY_KEYWORDS:
+        if kw in lower:
+            return True
+    return False
+
+
+def _mark_agencies(conn):
+    """Re-scan all firms and mark/unmark agencies based on current blacklist.
+    Runs on every init_db() to catch newly added agency patterns.
+    """
+    firms = conn.execute("SELECT DISTINCT firma FROM nabidky WHERE firma != ''").fetchall()
+    agency_firms = [r[0] for r in firms if is_agency(r[0])]
+    if agency_firms:
+        placeholders = ",".join("?" * len(agency_firms))
+        conn.execute(
+            f"UPDATE nabidky SET is_agency = 1 WHERE firma IN ({placeholders})",
+            agency_firms,
+        )
+        print(f"[init_db] Marked {len(agency_firms)} agency companies as is_agency=1")
+
 
 def init_db() -> None:
     """Vytvoří databázi, tabulky a view. Bezpečně migruje existující DB."""
@@ -120,6 +266,18 @@ def init_db() -> None:
                 kraj            TEXT
             );
 
+            -- Scrape log for anomaly detection
+            CREATE TABLE IF NOT EXISTS scrape_log (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                datum       TEXT NOT NULL,
+                den_tydne   INTEGER NOT NULL,
+                kraj        TEXT NOT NULL,
+                pocet       INTEGER NOT NULL DEFAULT 0,
+                novych      INTEGER NOT NULL DEFAULT 0,
+                chyba       TEXT DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_scrape_log_datum ON scrape_log(datum);
+
             CREATE INDEX IF NOT EXISTS idx_dm_company ON decision_makers(company_normalized);
             CREATE INDEX IF NOT EXISTS idx_dm_kraj    ON decision_makers(kraj);
             CREATE INDEX IF NOT EXISTS idx_dm_profile ON decision_makers(profile_url);
@@ -138,10 +296,18 @@ def init_db() -> None:
             "predchozi_datum_prvni":"ALTER TABLE nabidky ADD COLUMN predchozi_datum_prvni TEXT",
             "obor":                 "ALTER TABLE nabidky ADD COLUMN obor TEXT DEFAULT ''",
             "datum_vydani":         "ALTER TABLE nabidky ADD COLUMN datum_vydani TEXT DEFAULT ''",
+            "publikovano":          "ALTER TABLE nabidky ADD COLUMN publikovano TEXT DEFAULT ''",
+            "is_agency":            "ALTER TABLE nabidky ADD COLUMN is_agency INTEGER DEFAULT 0",
         }
         for col, sql in migrations.items():
             if col not in existing_cols:
                 conn.execute(sql)
+
+        # Always re-scan agencies (catches newly added patterns)
+        _mark_agencies(conn)
+
+        # Index for agency filter (safe to create after migration)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_nabidky_agency ON nabidky(is_agency)")
 
         # VIEW: nabidky + seznam dat inzerování
         conn.executescript("""
@@ -161,6 +327,8 @@ def init_db() -> None:
                 n.url,
                 n.pocet_scanu,
                 n.aktivni,
+                n.is_agency,
+                n.publikovano,
                 n.datum_prvni_scan,
                 n.datum_posledni_scan,
                 n.predchozi_job_id,
@@ -285,10 +453,12 @@ def uloz_nabidky(nabidky: list) -> dict:
                         plat_od   = COALESCE(?, plat_od),
                         plat_do   = COALESCE(?, plat_do),
                         obor      = COALESCE(NULLIF(?, ''), obor),
-                        datum_vydani = COALESCE(NULLIF(?, ''), datum_vydani)
+                        datum_vydani = COALESCE(NULLIF(?, ''), datum_vydani),
+                        publikovano  = COALESCE(NULLIF(?, ''), publikovano)
                     WHERE job_id = ?
                 """.format(increment), (now, n.get("plat", ""), plat_od, plat_do,
-                      n.get("obor", ""), n.get("datum_vydani", ""), job_id))
+                      n.get("obor", ""), n.get("datum_vydani", ""),
+                      n.get("publikovano", ""), job_id))
                 aktualizovane += 1
             else:
                 # Hledáme předchozí zadání stejné firmy + pozice
@@ -300,14 +470,16 @@ def uloz_nabidky(nabidky: list) -> dict:
                 if predchozi:
                     opakovani += 1
 
+                agency_flag = 1 if is_agency(n.get("firma", "")) else 0
                 conn.execute("""
                     INSERT INTO nabidky
                         (job_id, pozice, firma, misto, kraj, kraj_slug,
                          plat_text, plat_od, plat_do, url, obor, datum_vydani,
+                         publikovano,
                          datum_prvni_scan, datum_posledni_scan,
                          pocet_scanu, aktivni,
-                         predchozi_job_id, predchozi_datum_prvni)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
+                         predchozi_job_id, predchozi_datum_prvni, is_agency)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?)
                 """, (
                     job_id,
                     n.get("pozice", ""),
@@ -320,8 +492,9 @@ def uloz_nabidky(nabidky: list) -> dict:
                     n.get("url", ""),
                     n.get("obor", ""),
                     n.get("datum_vydani", ""),
+                    n.get("publikovano", ""),
                     now, now,
-                    predchozi_job_id, predchozi_datum,
+                    predchozi_job_id, predchozi_datum, agency_flag,
                 ))
                 nove += 1
 
@@ -358,7 +531,7 @@ def nacti_nabidky(
     offset: int = 0,
 ) -> list:
     with get_conn() as conn:
-        where, params = [], []
+        where, params = ["is_agency = 0"], []
         if kraj:
             where.append("kraj = ?"); params.append(kraj)
         if aktivni_pouze:
@@ -376,37 +549,42 @@ def nacti_nabidky(
 
 
 def statistiky() -> dict:
+    # Agency filter applied to all queries
+    na = "AND is_agency = 0"
     with get_conn() as conn:
-        total       = conn.execute("SELECT COUNT(*) FROM nabidky").fetchone()[0]
-        aktivni     = conn.execute("SELECT COUNT(*) FROM nabidky WHERE aktivni = 1").fetchone()[0]
+        total       = conn.execute("SELECT COUNT(*) FROM nabidky WHERE is_agency = 0").fetchone()[0]
+        aktivni     = conn.execute(f"SELECT COUNT(*) FROM nabidky WHERE aktivni = 1 {na}").fetchone()[0]
         nove_dnes   = conn.execute(
-            "SELECT COUNT(*) FROM nabidky WHERE DATE(datum_prvni_scan) = DATE('now')"
+            f"SELECT COUNT(*) FROM nabidky WHERE DATE(datum_prvni_scan) = DATE('now') {na}"
         ).fetchone()[0]
         opakovani_celkem = conn.execute(
-            "SELECT COUNT(*) FROM nabidky WHERE predchozi_job_id IS NOT NULL"
+            f"SELECT COUNT(*) FROM nabidky WHERE predchozi_job_id IS NOT NULL AND aktivni = 1 {na}"
         ).fetchone()[0]
-        top_firmy   = conn.execute("""
+        top_firmy   = conn.execute(f"""
             SELECT firma, COUNT(*) as pocet_inzeratu, MAX(pocet_scanu) as max_scanu
-            FROM nabidky WHERE firma != '' AND aktivni = 1
+            FROM nabidky WHERE firma != '' AND aktivni = 1 {na}
             GROUP BY firma ORDER BY pocet_inzeratu DESC LIMIT 10
         """).fetchall()
-        dlouho_aktivni = conn.execute("""
-            SELECT * FROM nabidky WHERE aktivni = 1 AND pocet_scanu >= 4
+        dlouho_aktivni_count = conn.execute(f"""
+            SELECT COUNT(*) FROM nabidky WHERE aktivni = 1 AND pocet_scanu >= 4 {na}
+        """).fetchone()[0]
+        dlouho_aktivni = conn.execute(f"""
+            SELECT * FROM nabidky WHERE aktivni = 1 AND pocet_scanu >= 4 {na}
             ORDER BY pocet_scanu DESC LIMIT 20
         """).fetchall()
         posledni_scan = conn.execute(
             "SELECT hodnota FROM konfigurace WHERE klic = 'posledni_scan'"
         ).fetchone()
-        kraje_stats = conn.execute("""
-            SELECT kraj, COUNT(*) as pocet FROM nabidky WHERE aktivni = 1
+        kraje_stats = conn.execute(f"""
+            SELECT kraj, COUNT(*) as pocet FROM nabidky WHERE aktivni = 1 {na}
             GROUP BY kraj ORDER BY pocet DESC
         """).fetchall()
-        opakovane_pozice = conn.execute("""
+        opakovane_pozice = conn.execute(f"""
             SELECT n.firma, n.pozice, n.kraj,
                    n.datum_prvni_scan, n.predchozi_datum_prvni,
                    n.url, n.job_id
             FROM nabidky n
-            WHERE n.predchozi_job_id IS NOT NULL AND n.aktivni = 1
+            WHERE n.predchozi_job_id IS NOT NULL AND n.aktivni = 1 {na}
             ORDER BY n.datum_prvni_scan DESC LIMIT 15
         """).fetchall()
 
@@ -415,6 +593,7 @@ def statistiky() -> dict:
         "aktivni": aktivni,
         "nove_dnes": nove_dnes,
         "opakovani_celkem": opakovani_celkem,
+        "dlouho_aktivni_count": dlouho_aktivni_count,
         "top_firmy": [dict(r) for r in top_firmy],
         "dlouho_aktivni": [dict(r) for r in dlouho_aktivni],
         "posledni_scan": posledni_scan[0] if posledni_scan else "—",
@@ -683,13 +862,14 @@ def add_company_alias(firma_jobs: str, firma_linkedin: str) -> None:
             )
 
 
-def radar_matches(min_scanu: int = 1, min_score: float = 0.82) -> list:
+def radar_matches(min_scanu: int = 1, min_score: float = 0.82, skip_fuzzy: bool = False) -> list:
     """Hlavní funkce radaru.
     Najde firmy z jobs.cz, které mají odpovídajícího decision makera.
     Vrací seznam matchů seřazený podle signálu (počet pozic, délka inzerce).
 
     Optimalizováno pro rychlost: exact match a substring match jsou O(1) per firma.
     Fuzzy match (pomalý) se spouští jen na firmy s 3+ pozicemi, které nebyly nalezeny jinak.
+    skip_fuzzy=True skips the expensive fuzzy pass (for dashboard/fast views).
     """
     aliases = _load_manual_aliases()
 
@@ -702,7 +882,7 @@ def radar_matches(min_scanu: int = 1, min_score: float = 0.82) -> list:
                    datum_vydani, aktivni,
                    predchozi_job_id, predchozi_datum_prvni
             FROM nabidky
-            WHERE aktivni = 1 AND firma != ''
+            WHERE aktivni = 1 AND firma != '' AND is_agency = 0
             ORDER BY firma, pocet_scanu DESC
         """).fetchall()
 
@@ -809,11 +989,12 @@ def radar_matches(min_scanu: int = 1, min_score: float = 0.82) -> list:
             matched_job_norms.add(job_norm)
 
     # 4. Fuzzy pass — ONLY for unmatched companies with 3+ positions (worth the cost)
+    #    Skipped when skip_fuzzy=True (dashboard, recommendations) to avoid O(N*M) hang.
     unmatched_valuable = [
         (norm, data) for norm, data in jobs_by_company.items()
         if norm not in matched_job_norms and len(data["pozice"]) >= 3
     ]
-    if unmatched_valuable and dm_norms:
+    if unmatched_valuable and dm_norms and not skip_fuzzy:
         for job_norm, job_data in unmatched_valuable:
             best_dm_norm = None
             best_score = 0.0
@@ -895,7 +1076,7 @@ def radar_matches(min_scanu: int = 1, min_score: float = 0.82) -> list:
 
 def outreach_brief(firma_norm: str) -> Optional[dict]:
     """Generuje strukturovaný brief pro jednu firmu (pro ChatGPT outreach)."""
-    result = radar_matches()
+    result = radar_matches(skip_fuzzy=True)
     for m in result["matches"]:
         if m["firma_norm"] == firma_norm:
             pozice_lines = []
@@ -929,47 +1110,90 @@ def outreach_brief(firma_norm: str) -> Optional[dict]:
 # ── Company detail ────────────────────────────────────────────────────────────
 
 def firma_detail(firma_norm: str) -> Optional[dict]:
-    """Kompletní přehled o firmě — pozice, kontakty, outreach historie."""
+    """Kompletní přehled o firmě — pozice, kontakty, outreach historie.
+    Each position is enriched with flags and computed fields.
+    """
     with get_conn() as conn:
-        # All positions (active + inactive) for this company
-        pozice = conn.execute("""
-            SELECT job_id, pozice, kraj, obor, plat_text, url,
-                   pocet_scanu, datum_prvni_scan, datum_posledni_scan,
-                   datum_vydani, aktivni,
-                   predchozi_job_id, predchozi_datum_prvni
-            FROM nabidky
-            WHERE firma != '' AND ? IN (
-                SELECT firma_norm FROM (
-                    SELECT job_id, ? as firma_norm FROM nabidky LIMIT 1
-                )
-            )
-            ORDER BY aktivni DESC, pocet_scanu DESC
-        """, (firma_norm, firma_norm)).fetchall()
-
-        # Better: search by normalized company name
-        # First find the original firma name
+        # Find the original firma name(s) matching this normalized form
         all_firms = conn.execute(
             "SELECT DISTINCT firma FROM nabidky WHERE firma != ''"
         ).fetchall()
 
-        target_firma = None
+        matching_firms = []
         for row in all_firms:
             if normalize_company(row["firma"]) == firma_norm:
-                target_firma = row["firma"]
-                break
+                matching_firms.append(row["firma"])
 
-        if not target_firma:
+        if not matching_firms:
             return None
 
-        pozice = [dict(r) for r in conn.execute("""
+        target_firma = matching_firms[0]
+
+        # Get all positions for matching firm names
+        placeholders = ",".join("?" * len(matching_firms))
+        pozice = [dict(r) for r in conn.execute(f"""
             SELECT job_id, pozice, kraj, obor, plat_text, url,
                    pocet_scanu, datum_prvni_scan, datum_posledni_scan,
-                   datum_vydani, aktivni,
-                   predchozi_job_id, predchozi_datum_prvni
+                   datum_vydani, publikovano, aktivni,
+                   predchozi_job_id, predchozi_datum_prvni,
+                   CAST(JULIANDAY('now') - JULIANDAY(datum_prvni_scan) AS INTEGER) AS dni_aktivni
             FROM nabidky
-            WHERE firma = ?
-            ORDER BY aktivni DESC, datum_vydani DESC, pocet_scanu DESC
-        """, (target_firma,)).fetchall()]
+            WHERE firma IN ({placeholders})
+            ORDER BY aktivni DESC, pocet_scanu DESC, datum_prvni_scan DESC
+        """, matching_firms).fetchall()]
+
+        # Enrich each position with flags
+        for p in pozice:
+            flags = []
+            if p.get("publikovano") and "ktualizov" in p["publikovano"]:
+                flags.append({
+                    "typ": "aktualizovano",
+                    "barva": "#dc2626",
+                    "bg": "#fef2f2",
+                    "text": "Aktualizovano",
+                    "duvod": "Firma tuto pozici obnovila na jobs.cz. To znamena, ze ji drive vypsali, neobsadili, a ted se snazi znovu. Silny signal ze potrebuji pomoc."
+                })
+            if p.get("predchozi_job_id"):
+                flags.append({
+                    "typ": "opakovane",
+                    "barva": "#7c3aed",
+                    "bg": "#faf5ff",
+                    "text": "Opakovane zadani",
+                    "duvod": "Tato pozice uz byla vypsana drive (od {}) a zanikla. Firma ji zadala znovu pod novym inzeratem. Nesli obsadit na prvni pokus.".format(
+                        p["predchozi_datum_prvni"][:10] if p.get("predchozi_datum_prvni") else "?"
+                    )
+                })
+            if p.get("pocet_scanu", 0) >= 6:
+                flags.append({
+                    "typ": "dlouhodobe",
+                    "barva": "#dc2626",
+                    "bg": "#fef2f2",
+                    "text": "{}x videno ve scanech".format(p["pocet_scanu"]),
+                    "duvod": "Pozici jsme videli v {} ruznych scanech. Je otevrena uz minimalne {} dni. Firma ji dlouhodobe nedokaze obsadit.".format(
+                        p["pocet_scanu"], p.get("dni_aktivni", "?")
+                    )
+                })
+            elif p.get("pocet_scanu", 0) >= 4:
+                flags.append({
+                    "typ": "problematicke",
+                    "barva": "#ea580c",
+                    "bg": "#fff7ed",
+                    "text": "{}x videno ve scanech".format(p["pocet_scanu"]),
+                    "duvod": "Pozice je otevrena uz dele nez mesic (videna v {} scanech). Firma ji pravdepodobne neobsadi sama.".format(
+                        p["pocet_scanu"]
+                    )
+                })
+            if p.get("dni_aktivni") and p["dni_aktivni"] > 30 and not any(f["typ"] in ("dlouhodobe","problematicke") for f in flags):
+                flags.append({
+                    "typ": "starnouci",
+                    "barva": "#d97706",
+                    "bg": "#fefce8",
+                    "text": "{}d otevrena".format(p["dni_aktivni"]),
+                    "duvod": "Pozice je otevrena {} dni. Cim dele, tim vetsi pravdepodobnost ze firma potrebuje externi pomoc s naborem.".format(
+                        p["dni_aktivni"]
+                    )
+                })
+            p["flags"] = flags
 
         # Decision makers
         dm_norm = firma_norm
@@ -1004,17 +1228,25 @@ def firma_detail(firma_norm: str) -> Optional[dict]:
         neaktivni_pozice = [p for p in pozice if not p["aktivni"]]
         kraje = sorted(set(p["kraj"] for p in aktivni_pozice if p.get("kraj")))
 
+        # Aggregate flags for active positions
+        cnt_aktualizovano = sum(1 for p in aktivni_pozice if any(f["typ"] == "aktualizovano" for f in p["flags"]))
+        cnt_opakovane = sum(1 for p in aktivni_pozice if any(f["typ"] == "opakovane" for f in p["flags"]))
+        cnt_problematicke = sum(1 for p in aktivni_pozice if p.get("pocet_scanu", 0) >= 4)
+
+        # Signal summary
+        signals = []
+        if cnt_aktualizovano:
+            signals.append("{} aktualizovanych".format(cnt_aktualizovano))
+        if cnt_opakovane:
+            signals.append("{} opakovane zadanych".format(cnt_opakovane))
+        if cnt_problematicke:
+            signals.append("{} dlouhodobe neobsazenych".format(cnt_problematicke))
+
         # Days since oldest active position
         max_days = 0
         for p in aktivni_pozice:
-            if p.get("datum_vydani"):
-                try:
-                    d = date.fromisoformat(p["datum_vydani"])
-                    days = (date.today() - d).days
-                    if days > max_days:
-                        max_days = days
-                except ValueError:
-                    pass
+            if p.get("dni_aktivni") and p["dni_aktivni"] > max_days:
+                max_days = p["dni_aktivni"]
 
         return {
             "firma": target_firma,
@@ -1027,6 +1259,10 @@ def firma_detail(firma_norm: str) -> Optional[dict]:
             "pocet_aktivni": len(aktivni_pozice),
             "pocet_neaktivni": len(neaktivni_pozice),
             "max_days": max_days,
+            "cnt_aktualizovano": cnt_aktualizovano,
+            "cnt_opakovane": cnt_opakovane,
+            "cnt_problematicke": cnt_problematicke,
+            "signals": signals,
         }
 
 
@@ -1035,12 +1271,30 @@ def firma_detail(firma_norm: str) -> Optional[dict]:
 def dashboard_stats() -> dict:
     """Agregované statistiky pro dashboard."""
     week_ago = (date.today() - timedelta(days=7)).isoformat()
+    na = "AND is_agency = 0"
 
     with get_conn() as conn:
-        aktivni = conn.execute("SELECT COUNT(*) FROM nabidky WHERE aktivni = 1").fetchone()[0]
-        total_db = conn.execute("SELECT COUNT(*) FROM nabidky").fetchone()[0]
+        aktivni = conn.execute(f"SELECT COUNT(*) FROM nabidky WHERE aktivni = 1 {na}").fetchone()[0]
+        total_db = conn.execute("SELECT COUNT(*) FROM nabidky WHERE is_agency = 0").fetchone()[0]
         nove_tyden = conn.execute(
-            "SELECT COUNT(*) FROM nabidky WHERE DATE(datum_prvni_scan) >= ?", (week_ago,)
+            f"SELECT COUNT(*) FROM nabidky WHERE DATE(datum_prvni_scan) >= ? {na}", (week_ago,)
+        ).fetchone()[0]
+        aktualizovane = conn.execute(
+            f"SELECT COUNT(*) FROM nabidky WHERE aktivni = 1 AND publikovano LIKE '%ktualizov%' {na}"
+        ).fetchone()[0]
+        starnouci = conn.execute(
+            f"SELECT COUNT(*) FROM nabidky WHERE aktivni = 1 {na} "
+            "AND CAST(JULIANDAY('now') - JULIANDAY(datum_prvni_scan) AS INTEGER) >= 21"
+        ).fetchone()[0]
+        opakovane = conn.execute(
+            f"SELECT COUNT(*) FROM nabidky WHERE aktivni = 1 {na} "
+            "AND predchozi_job_id IS NOT NULL AND predchozi_job_id != ''"
+        ).fetchone()[0]
+        problematicke = conn.execute(
+            f"SELECT COUNT(*) FROM nabidky WHERE aktivni = 1 AND pocet_scanu >= 4 {na}"
+        ).fetchone()[0]
+        firmy_celkem = conn.execute(
+            f"SELECT COUNT(DISTINCT firma) FROM nabidky WHERE aktivni = 1 AND firma != '' {na}"
         ).fetchone()[0]
         dm_total = conn.execute("SELECT COUNT(*) FROM decision_makers").fetchone()[0]
         outreach_total = conn.execute("SELECT COUNT(*) FROM outreach").fetchone()[0]
@@ -1062,6 +1316,11 @@ def dashboard_stats() -> dict:
         "aktivni_pozice": aktivni,
         "total_pozice": total_db,
         "nove_tyden": nove_tyden,
+        "aktualizovane": aktualizovane,
+        "starnouci": starnouci,
+        "opakovane": opakovane,
+        "problematicke": problematicke,
+        "firmy_celkem": firmy_celkem,
         "dm_total": dm_total,
         "outreach_total": outreach_total,
         "outreach_ceka": outreach_ceka,
@@ -1069,6 +1328,159 @@ def dashboard_stats() -> dict:
         "posledni_scan": posledni_scan[0] if posledni_scan else "—",
         "recent_outreach": recent_outreach,
     }
+
+
+def filtr_pozice(filtr: str = "", kraj: str = "", limit: int = 500,
+                 sort: str = "") -> list:
+    """Vrací filtrované pozice s kontextem firmy.
+    filtr: 'aktualizovane' | 'starnouci' | 'nove_tyden' | 'aktivni' |
+           'opakovane' | 'problematicke' | 'nejstarsi' | ''
+    sort: 'stari' | 'firma' | 'scanu' | '' (default per filter)
+    Each row is enriched with company stats: firma_pozic, firma_opak, firma_probl, firma_aktual.
+    """
+    week_ago = (date.today() - timedelta(days=7)).isoformat()
+
+    base = """
+        SELECT n.firma, n.pozice, n.kraj, n.misto, n.url, n.plat_text,
+               n.publikovano, n.datum_vydani, n.datum_prvni_scan,
+               n.pocet_scanu, n.predchozi_job_id, n.predchozi_datum_prvni,
+               CAST(JULIANDAY('now') - JULIANDAY(n.datum_prvni_scan) AS INTEGER) AS dni_aktivni
+        FROM nabidky n
+        WHERE n.aktivni = 1 AND n.is_agency = 0
+    """
+    params = []
+
+    if filtr == "aktualizovane":
+        base += " AND n.publikovano LIKE '%ktualizov%'"
+    elif filtr == "starnouci":
+        base += " AND CAST(JULIANDAY('now') - JULIANDAY(n.datum_prvni_scan) AS INTEGER) >= 21"
+    elif filtr == "nove_tyden":
+        base += " AND DATE(n.datum_prvni_scan) >= ?"
+        params.append(week_ago)
+    elif filtr == "opakovane":
+        base += " AND n.predchozi_job_id IS NOT NULL AND n.predchozi_job_id != ''"
+    elif filtr == "problematicke":
+        base += " AND n.pocet_scanu >= 4"
+    elif filtr == "nejstarsi":
+        pass  # all active, sorted by age
+
+    if kraj:
+        base += " AND n.kraj = ?"
+        params.append(kraj)
+
+    # Determine sort order
+    if sort == "stari":
+        base += " ORDER BY dni_aktivni DESC"
+    elif sort == "firma":
+        base += " ORDER BY n.firma ASC, dni_aktivni DESC"
+    elif sort == "scanu":
+        base += " ORDER BY n.pocet_scanu DESC"
+    elif filtr in ("aktualizovane", "starnouci", "problematicke", "nejstarsi"):
+        base += " ORDER BY dni_aktivni DESC"
+    elif filtr in ("opakovane",):
+        base += " ORDER BY n.datum_prvni_scan DESC"
+    elif filtr == "nove_tyden":
+        base += " ORDER BY n.datum_prvni_scan DESC"
+    else:
+        base += " ORDER BY n.datum_prvni_scan DESC"
+
+    base += " LIMIT ?"
+    params.append(limit)
+
+    with get_conn() as conn:
+        rows = conn.execute(base, params).fetchall()
+        positions = [dict(r) for r in rows]
+
+        # Enrich: company stats (batch query for all firms in the result)
+        if positions:
+            firms = list({p["firma"] for p in positions if p["firma"]})
+            if firms:
+                placeholders = ",".join("?" * len(firms))
+                firma_stats = conn.execute(f"""
+                    SELECT firma,
+                           COUNT(*) as firma_pozic,
+                           SUM(CASE WHEN predchozi_job_id IS NOT NULL
+                                    AND predchozi_job_id != '' THEN 1 ELSE 0 END) as firma_opak,
+                           SUM(CASE WHEN pocet_scanu >= 4 THEN 1 ELSE 0 END) as firma_probl,
+                           SUM(CASE WHEN publikovano LIKE '%ktualizov%' THEN 1 ELSE 0 END) as firma_aktual
+                    FROM nabidky
+                    WHERE aktivni = 1 AND is_agency = 0 AND firma IN ({placeholders})
+                    GROUP BY firma
+                """, firms).fetchall()
+                stats_map = {r["firma"]: dict(r) for r in firma_stats}
+
+                for p in positions:
+                    fs = stats_map.get(p["firma"], {})
+                    p["firma_pozic"] = fs.get("firma_pozic", 0)
+                    p["firma_opak"] = fs.get("firma_opak", 0)
+                    p["firma_probl"] = fs.get("firma_probl", 0)
+                    p["firma_aktual"] = fs.get("firma_aktual", 0)
+
+    return positions
+
+
+# ── Company overview (browsable list) ─────────────────────────────────────────
+
+def firmy_prehled(sort: str = "pozic", page: int = 1, per_page: int = 50,
+                  kraj: str = "") -> dict:
+    """Returns paginated company list with sorting.
+    sort: 'pozic' | 'opakovane' | 'problematicke' | 'firma'
+    Returns: {firmy: [...], total: int, page: int, pages: int}
+    """
+    na = "AND is_agency = 0"
+    kraj_filter = ""
+    params = []
+    if kraj:
+        kraj_filter = "AND kraj = ?"
+        params.append(kraj)
+
+    order = {
+        "pozic": "pocet_pozic DESC",
+        "opakovane": "opakovanych DESC, pocet_pozic DESC",
+        "problematicke": "problematickych DESC, pocet_pozic DESC",
+        "firma": "firma ASC",
+    }.get(sort, "pocet_pozic DESC")
+
+    with get_conn() as conn:
+        # Total count
+        total = conn.execute(f"""
+            SELECT COUNT(DISTINCT firma) FROM nabidky
+            WHERE aktivni = 1 AND firma != '' {na} {kraj_filter}
+        """, params).fetchone()[0]
+
+        offset = (page - 1) * per_page
+        pages = max(1, (total + per_page - 1) // per_page)
+
+        rows = conn.execute(f"""
+            SELECT firma,
+                   COUNT(*) as pocet_pozic,
+                   SUM(CASE WHEN predchozi_job_id IS NOT NULL
+                            AND predchozi_job_id != '' THEN 1 ELSE 0 END) as opakovanych,
+                   SUM(CASE WHEN pocet_scanu >= 4 THEN 1 ELSE 0 END) as problematickych,
+                   MAX(pocet_scanu) as max_scanu,
+                   MIN(datum_prvni_scan) as nejstarsi,
+                   GROUP_CONCAT(DISTINCT kraj) as kraje
+            FROM nabidky
+            WHERE aktivni = 1 AND firma != '' {na} {kraj_filter}
+            GROUP BY firma
+            ORDER BY {order}
+            LIMIT ? OFFSET ?
+        """, params + [per_page, offset]).fetchall()
+
+    firmy = []
+    for r in rows:
+        firmy.append({
+            "firma": r["firma"],
+            "firma_norm": normalize_company(r["firma"]),
+            "pocet_pozic": r["pocet_pozic"],
+            "opakovanych": r["opakovanych"],
+            "problematickych": r["problematickych"],
+            "max_scanu": r["max_scanu"],
+            "nejstarsi": r["nejstarsi"],
+            "kraje": r["kraje"] or "",
+        })
+
+    return {"firmy": firmy, "total": total, "page": page, "pages": pages}
 
 
 # ── Outreach CRM ─────────────────────────────────────────────────────────────
@@ -1152,11 +1564,12 @@ def outreach_statistiky() -> dict:
 
 # ── Per-region recommendations ───────────────────────────────────────────────
 
-def radar_doporuceni(per_region: int = 3) -> list:
+def radar_doporuceni(per_region: int = 3, skip_fuzzy: bool = True) -> list:
     """Top N firem za každý region, bez již oslovených.
     Vrací flat list seřazený: region → signal_score DESC.
+    skip_fuzzy=True by default for speed (exact+substring matches are sufficient).
     """
-    result = radar_matches()
+    result = radar_matches(skip_fuzzy=skip_fuzzy)
     matches = result["matches"]
 
     # Group by region, exclude already contacted
@@ -1203,6 +1616,7 @@ def detect_surge(threshold: int = 4) -> list:
             WHERE aktivni = 1
               AND DATE(datum_prvni_scan) >= ?
               AND firma != ''
+              AND is_agency = 0
             GROUP BY firma
             HAVING COUNT(*) >= ?
             ORDER BY COUNT(*) DESC

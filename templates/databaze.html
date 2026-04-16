@@ -34,26 +34,26 @@
 
 <!-- Stats -->
 <div class="stats-row">
-    <div class="stat-card purple">
+    <a href="/pozice?filtr=aktivni" class="stat-card purple" style="text-decoration:none; color:inherit; cursor:pointer;">
         <div class="number">{{ stats.aktivni }}</div>
         <div class="label">Aktivnich</div>
-    </div>
+    </a>
     <div class="stat-card blue">
         <div class="number">{{ stats.total }}</div>
         <div class="label">Celkem v DB</div>
     </div>
-    <div class="stat-card green">
+    <a href="/pozice?filtr=nove_tyden" class="stat-card green" style="text-decoration:none; color:inherit; cursor:pointer;">
         <div class="number">{{ stats.nove_dnes }}</div>
         <div class="label">Novych dnes</div>
-    </div>
-    <div class="stat-card orange">
-        <div class="number">{{ stats.dlouho_aktivni|length }}</div>
-        <div class="label">Problemovych pozic</div>
-    </div>
-    <div class="stat-card red">
-        <div class="number">{{ stats.opakovani_celkem }}</div>
-        <div class="label">Opakovana zadani</div>
-    </div>
+    </a>
+    <a href="/pozice?filtr=problematicke" class="stat-card orange" style="text-decoration:none; color:inherit; cursor:pointer;">
+        <div class="number">{{ stats.dlouho_aktivni_count }}</div>
+        <div class="label">Problematickych pozic</div>
+    </a>
+    <a href="/pozice?filtr=opakovane" class="stat-card" style="text-decoration:none; color:inherit; cursor:pointer; border:2px solid #7c3aed; background:#faf5ff;">
+        <div class="number" style="color:#7c3aed;">{{ stats.opakovani_celkem }}</div>
+        <div class="label" style="color:#7c3aed;">Opakovana zadani</div>
+    </a>
     <div class="stat-card">
         <div class="number" style="font-size:1em;">{{ stats.posledni_scan[:16] if stats.posledni_scan != '—' else '—' }}</div>
         <div class="label">Posledni scan</div>
