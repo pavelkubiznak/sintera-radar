@@ -1896,6 +1896,10 @@ def _decline_word_acc(word: str) -> str:
         return word + "e"               # ředitel → ředitele
     if low.endswith("eč"):
         return word + "e"               # svářeč → svářeče
+    if low.endswith("ač"):
+        return word + "e"               # prodavač → prodavače, hlídač → hlídače
+    if low.endswith("ič"):
+        return word + "e"               # řidič → řidiče, koordinátor? no: technik
     if low.endswith("éř") or low.endswith("ář"):
         return word + "e"               # bankéř → bankéře, elektrikář → elektrikáře
 
@@ -2441,8 +2445,16 @@ _PRIORITY_COLORS = {
 
 
 def _shorten_firma(name: str) -> str:
-    """Strip legal suffixes for natural company name.
-    'Škoda Auto a.s.' → 'Škoda Auto', 'ABB s.r.o.' → 'ABB'."""
+    """Strip legal suffixes, CAPS → Title Case, drop corporate descriptors.
+
+    'Škoda Auto a.s.' → 'Škoda Auto'
+    'ABB s.r.o.' → 'ABB'
+    'TEDOM a.s.' → 'Tedom'
+    'MONETA Money Bank, a.s.' → 'Moneta'
+    'IMI International s.r.o.' → 'IMI'
+    'Kaufland Česká republika v.o.s.' → 'Kaufland'
+    """
+    # 1. Strip legal suffix
     result = re.sub(
         r'[,\s]+(?:'
         r'a\.?\s*s\.?'
@@ -2450,10 +2462,45 @@ def _shorten_firma(name: str) -> str:
         r'|spol\.\s*s\s*r\.?\s*o\.?'
         r'|SE|k\.?\s*s\.?|v\.?\s*o\.?\s*s\.?'
         r'|z\.?\s*s\.?|z\.?\s*ú\.?|o\.?\s*p\.?\s*s\.?'
+        r'|GmbH|AG|Ltd\.?|Inc\.?|Corp\.?|Holding'
         r'|příspěvková\s+organizace'
         r')\s*\.?\s*$',
         '', name, flags=re.IGNORECASE
     ).strip().rstrip(',').strip()
+
+    # 2. Drop common corporate descriptors (after first word = brand)
+    _DESCRIPTORS = (
+        r'International', r'Czech Republic', r'Czechia', r'CZ',
+        r'Money Bank', r'Česká republika', r'Česká pojišťovna',
+        r'Group', r'Holding', r'Europe', r'CEE',
+    )
+    # Remove trailing descriptors only — keep the brand at front
+    for desc in _DESCRIPTORS:
+        result = re.sub(
+            r',?\s+' + desc + r'\b.*$', '', result, flags=re.IGNORECASE
+        ).strip().rstrip(',').strip()
+
+    # 3. Handle ALL CAPS: convert to Title Case per word
+    #    Keep short acronyms (ABB, IMI, BTL, O2, IBM) as-is
+    #    A word is an "acronym" if: all-caps, ≤3 chars, alphabetic
+    #    OR contains digits (O2, 3M)
+    words = result.split()
+    all_caps_count = sum(1 for w in words if w.isupper() and len(w) >= 3)
+    out = []
+    for w in words:
+        if not w.isalpha():
+            # Contains non-letters (O2, 3M, C#) → keep
+            out.append(w)
+        elif w.isupper() and len(w) <= 3:
+            # Short acronym → keep (ABB, IMI, BTL)
+            out.append(w)
+        elif w.isupper() and all_caps_count >= 1:
+            # Part of a CAPS brand (TEDOM, AUTO in "ŠKODA AUTO") → Title Case
+            out.append(w[0] + w[1:].lower())
+        else:
+            out.append(w)
+    result = ' '.join(out).strip().rstrip(',').strip()
+
     return result if result else name
 
 
@@ -2605,15 +2652,17 @@ def _extract_skill_combo(title: str) -> str:
 
 _BANNED_AKT_RE = re.compile(
     r'(?:'
+    # Self-referential / sender-centric (story uses third-person)
     r'vidím,?\s+(?:že|u\s+vás)'
     r'|všimla\s+jsem|zachytila\s+jsem'
     r'|prošla\s+jsem\s+si|dívám\s+se|sleduju'
     r'|pracuju\s+s|pomáhám\s+firmám'
     r'|ozývám\s+se'
     r'|ráda\s+bych|chtěla\s+bych'
+    # Agency lingo
     r'|\bagentur[ay]?\b|\bpersonální\b'
-    r'|\bslužb[auy]?\b|\bnabídk[auy]?\b|\břešení\b'
-    r'|\bkandidát[ůyi]?\b|\bsíť\s+(?:lidí|kandidátů)\b'
+    r'|\bslužb[auy]?\b'
+    r'|\bsíť\s+(?:lidí|kandidátů)\b'
     r'|\bpomoc\b|\bpomůžeme\b'
     r'|\bspolupráce?\b|\bspolupracovat\b'
     r'|\bkonzultac[ei]?\b|\baudit\b|\banalýz[auy]?\b'
@@ -2622,6 +2671,18 @@ _BANNED_AKT_RE = re.compile(
     r'|\bmám\s+pro\s+vás\b'
     r'|\bviděla\s+jsem,?\s+že\b'
     r'|\bzdarma\b'
+    # Old template artifacts (story hook replaces these)
+    r'|náhodou\s+jsem\s+narazila'
+    r'|znovu\s+aktualizovali'
+    # Database artifacts in story hook
+    r'|v\s+okolí\b'
+    r'|\([mžfw][/\s]*[mžfw]\)'
+    r'|\([mžfw][/\s]*[mžfw][/\s]*[mžfw]\)'
+    # Revealing / over-explaining phrases (spec bans these)
+    r'|nezvládal|nestíhal'
+    r'|nechal\s+vyhledat\s+externě'
+    r'|chápu,?\s+že\s+je\s+to'
+    r'|vím,?\s+jak\s+to\s+frustruje'
     r')',
     re.IGNORECASE,
 )
@@ -2646,6 +2707,9 @@ def _shorten_role(raw: str) -> str:
 
     # Strip emojis and other non-text characters
     s = re.sub(r'[^\w\s/|_*+\-–—.,;:()&]', '', s, flags=re.UNICODE).strip()
+
+    # Strip gender-marker parentheses: (m/ž), (ž/m), (m/ž/n), (m/f), (w/m)
+    s = re.sub(r'\s*\([^)]*[mžfw][/\s]*[mžfw][^)]*\)\s*', ' ', s, flags=re.IGNORECASE).strip()
 
     # Strip seniority prefixes (keep the core role)
     s = re.sub(r'^(?:senior|junior|lead|hlavní|zkušený|experienced)\s+',
@@ -2817,85 +2881,260 @@ def _misto_locative(city: str) -> str:
     cl = city.strip().lower()
     if cl in _KNOWN:
         return _KNOWN[cl]
-    # Fallback: "v <city>" — not grammatically perfect but usable
+    # Heuristic fallbacks for common Czech city endings
     prep = _prep_ve(city)
+    # -ice → -icích (Radonice → Radonicích, Hostomice → Hostomicích)
+    if cl.endswith("ice") and len(cl) > 4:
+        return "{} {}".format(prep, city[:-1] + "ích")
+    # -y → -ech (Domažlice already handled; fall back for plurals like Teplice)
+    # Already handled in _KNOWN dict above for common cases.
+    # -ec → -ci (Hradec → Hradci, but also Kolín is in _KNOWN)
+    if cl.endswith("ec") and len(cl) > 3:
+        return "{} {}".format(prep, city[:-2] + "ci")
+    # -a → -ě / -e (default for feminines is already in _KNOWN)
+    # Last resort: "v <nominative>" — not ideal but usable
     return "{} {}".format(prep, city)
+
+
+# Hook-style location: colloquial forms for story hook.
+# Big cities use "v <loc>"; medium/small cities use "kousek za <instr>"
+# or "u <gen>". Multi-word cities collapse to the short form.
+# Format: city_in_db (lowercase) → full phrase for the hook.
+_CITY_HOOK_FORMS = {
+    # Big cities — just "v <loc>"
+    "praha": "v Praze",
+    "brno": "v Brně",
+    "ostrava": "v Ostravě",
+    "plzeň": "v Plzni",
+    "olomouc": "v Olomouci",
+    "pardubice": "v Pardubicích",
+    # Medium — "u" or "kousek od"
+    "liberec": "u Liberce",
+    "hradec králové": "kousek za Hradcem",
+    "české budějovice": "v Budějovicích",
+    "ústí nad labem": "v Ústí",
+    "zlín": "ve Zlíně",
+    "jihlava": "v Jihlavě",
+    "karlovy vary": "ve Varech",
+    "kladno": "u Kladna",
+    "most": "v Mostě",
+    "opava": "v Opavě",
+    "teplice": "v Teplicích",
+    "děčín": "v Děčíně",
+    "chomutov": "v Chomutově",
+    "prostějov": "v Prostějově",
+    "přerov": "v Přerově",
+    "frýdek-místek": "u Frýdku",
+    "karviná": "v Karviné",
+    "třinec": "v Třinci",
+    # Small cities — "kousek za <instr>"
+    "jablonec nad nisou": "kousek za Jabloncem",
+    "mladá boleslav": "kousek za Boleslaví",
+    "kolín": "kousek za Kolínem",
+    "tábor": "kousek za Táborem",
+    "příbram": "kousek za Příbramí",
+    "cheb": "kousek za Chebem",
+    "sokolov": "kousek za Sokolovem",
+    "kroměříž": "v Kroměříži",
+    "klatovy": "v Klatovech",
+    "havířov": "v Havířově",
+    "hodonín": "v Hodoníně",
+    "nový jičín": "v Novém Jičíně",
+    "valašské meziříčí": "ve Valašském Meziříčí",
+    "šumperk": "v Šumperku",
+    "žďár nad sázavou": "ve Žďáru",
+    "trutnov": "v Trutnově",
+    "náchod": "v Náchodě",
+    "beroun": "kousek za Berounem",
+    "benešov": "kousek za Benešovem",
+    "kutná hora": "kousek za Kutnou Horou",
+    "pelhřimov": "v Pelhřimově",
+    "svitavy": "ve Svitavách",
+    "blansko": "kousek za Blanskem",
+    "vyškov": "kousek za Vyškovem",
+    "břeclav": "v Břeclavi",
+    "uherské hradiště": "v Uherském Hradišti",
+    "vsetín": "ve Vsetíně",
+    "boskovice": "v Boskovicích",
+    "humpolec": "v Humpolci",
+    "mělník": "kousek za Mělníkem",
+    "nymburk": "kousek za Nymburkem",
+    "rakovník": "v Rakovníku",
+    "slaný": "kousek za Slaným",
+    "neratovice": "v Neratovicích",
+    "litoměřice": "v Litoměřicích",
+    "louny": "v Lounech",
+    "žatec": "v Žatci",
+    "česká lípa": "v České Lípě",
+    "jablonec": "kousek za Jabloncem",
+    "chrudim": "v Chrudimi",
+    "havlíčkův brod": "v Havlíčkově Brodě",
+    "strakonice": "ve Strakonicích",
+    "písek": "v Písku",
+    "tachov": "v Tachově",
+    "mikulov": "v Mikulově",
+    "kyjov": "v Kyjově",
+    "kuřim": "v Kuřimi",
+    "tišnov": "v Tišnově",
+    "říčany": "v Říčanech",
+    "kralupy nad vltavou": "v Kralupech",
+    "brandýs nad labem": "v Brandýse",
+}
+
+
+def _city_hook(misto: str) -> str:
+    """Return hook-style location phrase for the story.
+
+    'Jablonec nad Nisou' → 'kousek za Jabloncem'
+    'Praha' → 'v Praze'
+    'Brno – Slatina' → 'v Brně'  (district stripped)
+    'Česká republika' → ''  (too generic, skip hook geography)
+    """
+    city = _clean_misto(misto)
+    if not city:
+        return ""
+    cl = city.lower()
+    if cl in _CITY_HOOK_FORMS:
+        return _CITY_HOOK_FORMS[cl]
+    # Fallback: use locative form (so at least grammatically correct)
+    return _misto_locative(city)
 
 
 def _missile_message_aktualizovano(dm_contact: dict, pozice_title: str,
                                     firma: str, combo: str,
                                     misto: str = "") -> str:
-    """Generate conversational DM for aktualizované positions.
-    Light, human, no sales pitch. 3 sentences + signature."""
-    # Oslovení: "Dobrý den, pane Nováku," / "Dobrý den, paní Nováková,"
+    """Generate story-hook DM for aktualizované positions.
+
+    Structure (5 parts):
+      1. Oslovení
+      2. Story hook — "právě hledám X {loc}. Jeden z oslovených kandidátů
+                       se domníval, že je to pro Vás."
+      3. Social proof — "Mezi řečí mi řekl, že se mu společnost {firma}
+                          celkem líbí, v minulosti o Vás uvažoval,
+                          nicméně si jako zaměstnavatele nakonec vybral jinak."
+      4. Bridge — "Vím, že sehnat {combo} {loc_bridge} může být oříšek."
+      5. CTA + signature
+
+    Returns empty string if INSUFFICIENT_DATA (missing core fields).
+    """
+    # ── INSUFFICIENT_DATA check ──
+    if not pozice_title or not firma:
+        return ""
+
+    # ── Oslovení ──
     osloveni_raw = _gender_osloveni(dm_contact)
     if not osloveni_raw or len(osloveni_raw) < 5:
         return ""
-    # _gender_osloveni returns "Pane Nováku" / "Paní Nováková" → lowercase for mid-sentence
     osloveni = "Dobrý den, " + osloveni_raw[0].lower() + osloveni_raw[1:]
 
+    # ── Firma (natural form) ──
     firma_short = _shorten_firma(firma)
-    prep = _prep_ve(firma_short)
+    if not firma_short:
+        return ""
 
+    # ── Role (shortened + accusative) ──
     role = _shorten_role(pozice_title)
-    # Decline for "na pozici <genitiv/akkusativ>"
+    if not role:
+        return ""
     role_acc = _decline_role_acc(role)
 
-    # Location: prefer city, fall back to nothing
-    city = _clean_misto(misto)
-    loc_phrase = _misto_locative(city) if city else ""
+    # ── Location ──
+    hook_loc = _city_hook(misto)       # "kousek za Jabloncem" or ""
+    bridge_loc = ""
+    city_clean = _clean_misto(misto)
+    if city_clean:
+        bridge_loc = _misto_locative(city_clean)  # "v Jablonci nad Nisou"
 
-    # Combo sentence — skip entirely if no skill found
-    if not combo:
-        combo_sent = ""  # no skill info → skip the sentence
-    elif combo.startswith("kombinace"):
-        # 2 skills: "kombinace PLC a angličtiny"
-        if loc_phrase:
-            combo_sent = (" Zrovna teď řeším stejný typ role jinde a vím, "
-                          "že {} {} může být oříšek.".format(combo, loc_phrase))
-        else:
-            combo_sent = (" Zrovna teď řeším stejný typ role jinde a vím, "
-                          "že {} může být oříšek.".format(combo))
+    # ── Part 2: Story hook ──
+    if hook_loc:
+        story_hook = ("právě hledám {role} {loc}. "
+                      "Jeden z oslovených kandidátů se domníval, že je to pro Vás."
+                      ).format(role=role_acc, loc=hook_loc)
     else:
-        # Single skill (genitive form) — wrap so grammar works
-        if loc_phrase:
-            combo_sent = (" Zrovna teď řeším stejný typ role jinde a vím, "
-                          "že sehnat lidi se znalostí {} {} může být oříšek.".format(combo, loc_phrase))
-        else:
-            combo_sent = (" Zrovna teď řeším stejný typ role jinde a vím, "
-                          "že sehnat lidi se znalostí {} může být oříšek.".format(combo))
+        # No city → omit geography from the hook
+        story_hook = ("právě hledám {role} pro jiného klienta. "
+                      "Jeden z oslovených kandidátů se domníval, že je to pro Vás."
+                      ).format(role=role_acc)
 
-    msg = (
-        "{osloveni}, náhodou jsem narazila na pozici {role}, "
-        "kterou u vás {prep} {firma} znovu aktualizovali."
-        "{combo} "
-        "Kdyby Vám to stálo za to, můžu Vám ukázat, co se v takové chvíli "
-        "dá udělat, aby se to s náborem zbytečně netáhlo."
-        "{sig}"
-    ).format(
-        osloveni=osloveni,
-        role=role_acc,
-        prep=prep,
-        firma=firma_short,
-        combo=combo_sent,
-        sig=_SIGNATURE,
-    )
-    return msg
+    # ── Part 3: Social proof + implicit pain (no "why") ──
+    social_proof = ("Mezi řečí mi řekl, že se mu společnost {firma} celkem líbí, "
+                    "v minulosti o Vás uvažoval, nicméně si jako zaměstnavatele "
+                    "nakonec vybral jinak.").format(firma=firma_short)
+
+    # ── Part 4: Bridge to their situation ──
+    # Transform "kombinace X a Y" → "kombinaci X a Y" for accusative context
+    combo_acc = combo
+    if combo and combo.startswith("kombinace "):
+        combo_acc = "kombinaci " + combo[len("kombinace "):]
+
+    if combo and bridge_loc:
+        if combo_acc.startswith("kombinaci"):
+            bridge = ("Vím, že sehnat {combo} {loc} "
+                      "může být oříšek.").format(combo=combo_acc, loc=bridge_loc)
+        else:
+            bridge = ("Vím, že sehnat lidi se znalostí {skill} {loc} "
+                      "může být oříšek.").format(skill=combo, loc=bridge_loc)
+    elif combo:
+        # combo without city
+        if combo_acc.startswith("kombinaci"):
+            bridge = ("Vím, že sehnat {combo} "
+                      "na českém trhu teď není snadné.").format(combo=combo_acc)
+        else:
+            bridge = ("Vím, že sehnat lidi se znalostí {skill} "
+                      "na českém trhu teď není snadné.").format(skill=combo)
+    elif bridge_loc:
+        # city only — soft fallback
+        bridge = ("Vím, že obsadit podobnou roli {loc} "
+                  "teď nebývá úplně snadné.").format(loc=bridge_loc)
+    else:
+        # no combo, no city — skip bridge entirely
+        bridge = ""
+
+    # ── Part 5: CTA ──
+    cta = ("Kdyby Vám to stálo za to, můžu Vám ukázat, "
+           "co se v takové chvíli dá udělat, aby se to s náborem "
+           "zbytečně netáhlo.")
+
+    # ── Assemble: paragraph structure ──
+    # Para 1: oslovení + story hook + social proof
+    # Para 2: bridge (if any)
+    # Para 3: CTA
+    para1 = "{os}, {hook} {sp}".format(
+        os=osloveni, hook=story_hook, sp=social_proof)
+    parts = [para1]
+    if bridge:
+        parts.append(bridge)
+    parts.append(cta)
+
+    body = "\n\n".join(parts)
+    return body + _SIGNATURE
 
 
 def _validate_aktualizovano(msg: str) -> bool:
-    """Validate message for aktualizované template."""
+    """Validate message for story-hook template."""
     if not msg or not msg.startswith("Dobrý den"):
         return False
     if "Šárka" not in msg:
         return False
-    # Check banned words only in body (before signature block)
-    body = msg.split("\n\n")[0]
+    # Split body vs signature at "Šárka Ogrocká"
+    body = msg.split("Šárka Ogrocká")[0].rstrip()
     if _BANNED_AKT_RE.search(body):
         return False
-    # Count sentences in the body
+    # Must contain the story hook phrase
+    if "právě hledám" not in body:
+        return False
+    # Must contain social proof
+    if "Jeden z oslovených kandidátů" not in body:
+        return False
+    # Sentence count: hook(2) + social proof(1) + optional bridge(1) + CTA(1) = 4–5
     sents = len(re.findall(r'[.?!]', body))
-    return sents <= 4
+    if sents < 4 or sents > 7:
+        return False
+    # Guard against ALL CAPS artifacts (min 3 consecutive uppercase letters)
+    # BUT allow 2–4 char acronyms (ABB, IMI, SAP, CNC, PLC)
+    for match in re.finditer(r'\b[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ]{5,}\b', body):
+        return False
+    return True
 
 
 # ── Vacancy detail fetcher (on-demand) ───────────────────────────
