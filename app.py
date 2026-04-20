@@ -17,7 +17,7 @@ from database import (init_db, uloz_nabidky, nacti_nabidky, statistiky, exportuj
                        import_linkedin_csv, add_decision_maker, dm_statistiky,
                        nacti_decision_makers, radar_matches, outreach_brief,
                        add_company_alias, add_outreach, update_outreach_status,
-                       nacti_outreach, outreach_statistiky, OUTREACH_STATUSES,
+                       nacti_outreach, nacti_outreach_map, outreach_statistiky, OUTREACH_STATUSES,
                        radar_doporuceni, detect_surge, generate_batch_messages,
                        normalize_company, firma_detail, dashboard_stats,
                        filtr_pozice, firmy_prehled,
@@ -169,6 +169,20 @@ def pozice_page():
     kraj = request.args.get("kraj", "")
     sort = request.args.get("sort", "")
     rows = filtr_pozice(filtr=filtr, kraj=kraj, limit=500, sort=sort)
+
+    # Enrich each row with a "sent" marker so the user doesn't double-send
+    # after a page refresh. Keyed by firma_norm.
+    outreach_map = nacti_outreach_map()
+    for r in rows:
+        fn = normalize_company(r.get("firma", ""))
+        if fn in outreach_map:
+            info = outreach_map[fn]
+            r["sent"] = True
+            r["sent_datum"] = info["datum"]
+            r["sent_kontakt"] = info["kontakt"]
+            r["sent_status"] = info["status"]
+        else:
+            r["sent"] = False
 
     titulky = {
         "aktualizovane": "Aktualizovane pozice",

@@ -1570,6 +1570,33 @@ def nacti_outreach(status: str = "", limit: int = 100) -> list:
         ).fetchall()]
 
 
+def nacti_outreach_map() -> dict:
+    """Returns {firma_norm: {'kontakt': str, 'datum': 'YYYY-MM-DD',
+                             'kanal': str, 'status': str}} for each
+    unique firma_norm. Keeps the MOST RECENT outreach per firma.
+
+    Used by the Pozice page to mark already-contacted rows so the user
+    doesn't accidentally double-send across page refreshes.
+    """
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT firma_norm, kontakt_jmeno, datum_osloveni, kanal, status
+            FROM outreach
+            ORDER BY datum_osloveni DESC
+        """).fetchall()
+    result = {}
+    for r in rows:
+        fn = r["firma_norm"]
+        if fn and fn not in result:
+            result[fn] = {
+                "kontakt": r["kontakt_jmeno"] or "",
+                "datum": (r["datum_osloveni"] or "")[:10],
+                "kanal": r["kanal"] or "",
+                "status": r["status"] or "odeslano",
+            }
+    return result
+
+
 def outreach_statistiky() -> dict:
     """Statistiky oslovení."""
     with get_conn() as conn:

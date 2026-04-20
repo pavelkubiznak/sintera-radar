@@ -33,6 +33,14 @@
               margin-right: 3px; vertical-align: middle; }
     .dm-dot-yes { background: #22c55e; }
     .dm-dot-no { background: #d1d5db; }
+    .dm-dot-sent { display: inline-block; margin-right: 3px; color: #fff;
+                   font-size: 0.85em; vertical-align: middle; }
+    .btn-dm-sent { background: #16a34a; color: #fff; }
+    .btn-dm-sent:hover { background: #15803d; }
+    .sent-badge { display: inline-block; margin-top: 3px; padding: 1px 7px;
+                  background: #dcfce7; color: #15803d; font-size: 10px;
+                  font-weight: 600; border-radius: 8px; letter-spacing: 0.3px; }
+    .sent-badge .sent-dot { font-size: 10px; margin-right: 2px; }
 </style>
 {% endblock %}
 
@@ -129,11 +137,17 @@
     </thead>
     <tbody>
         {% for r in rows %}
-        <tr style="{% if r.publikovano and 'ktualizov' in r.publikovano %}background:#fef2f2;{% elif r.pocet_scanu >= 4 and r.dni_aktivni and r.dni_aktivni > 30 %}background:#fff7ed;{% endif %}">
+        <tr id="pozice-row-{{ loop.index }}" style="{% if r.sent %}background:#f0fdf4; opacity:0.75;{% elif r.publikovano and 'ktualizov' in r.publikovano %}background:#fef2f2;{% elif r.pocet_scanu >= 4 and r.dni_aktivni and r.dni_aktivni > 30 %}background:#fff7ed;{% endif %}">
             <td>
                 <a class="firma-link" href="/firma/{{ r.firma|normalize }}">
                     <strong>{{ r.firma }}</strong>
                 </a>
+                {% if r.sent %}
+                <div class="sent-badge" title="Osloveno {{ r.sent_datum }} — {{ r.sent_kontakt }}">
+                    <span class="sent-dot">&#10004;</span>
+                    Osloveno {{ r.sent_datum[5:10]|replace('-', '.') if r.sent_datum else '' }}
+                </div>
+                {% endif %}
             </td>
             <td>
                 {% if r.url %}
@@ -221,7 +235,11 @@
                     jobs.cz
                 </a>
                 {% endif %}
-                {% if r.has_dm %}
+                {% if r.sent %}
+                <button class="btn-dm btn-dm-sent" onclick="toggleDM({{ loop.index }}, '{{ r.firma|e }}', '{{ r.pozice|e }}', '{{ r.kraj|e }}', '{{ r.url|e }}')" title="Ji&zcaron; osloveno {{ r.sent_datum }} — klikn&iacute; pro znovu-odesl&aacute;n&iacute;">
+                    <span class="dm-dot dm-dot-sent">&#10004;</span>Znovu
+                </button>
+                {% elif r.has_dm %}
                 <button class="btn-dm" onclick="toggleDM({{ loop.index }}, '{{ r.firma|e }}', '{{ r.pozice|e }}', '{{ r.kraj|e }}', '{{ r.url|e }}')">
                     <span class="dm-dot dm-dot-yes"></span>Zprava
                 </button>
@@ -342,8 +360,26 @@ function markSent(idx) {
         })
     }).then(function(r) { return r.json(); }).then(function(data) {
         if (data.ok) {
+            // Update the main pozice row (persistent visual state)
+            var mainRow = document.getElementById('pozice-row-' + idx);
+            if (mainRow) {
+                mainRow.style.background = '#f0fdf4';
+                mainRow.style.opacity = '0.75';
+                // Also mark any other rows for the same firma (user might have
+                // several positions from the same company open)
+                var allRows = document.querySelectorAll('tr[id^="pozice-row-"]');
+                var firmaLower = d.firma.toLowerCase();
+                allRows.forEach(function(row) {
+                    var strong = row.querySelector('.firma-link strong');
+                    if (strong && strong.textContent.trim().toLowerCase() === firmaLower) {
+                        row.style.background = '#f0fdf4';
+                        row.style.opacity = '0.75';
+                    }
+                });
+            }
+            // Then show the ephemeral confirmation in the DM panel
             var row = document.getElementById('dm-row-' + idx);
-            row.innerHTML = '<td colspan="10" style="padding:12px 20px; background:#dcfce7; color:#16a34a; font-weight:600;">Oznaceno jako odeslano — ' + d.firma + '</td>';
+            row.innerHTML = '<td colspan="10" style="padding:12px 20px; background:#dcfce7; color:#16a34a; font-weight:600;">Oznaceno jako odeslano — ' + d.firma + ' (po obnoveni stranky zustane zelene)</td>';
         }
     });
 }
