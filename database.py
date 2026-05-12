@@ -1359,6 +1359,22 @@ def dashboard_stats() -> dict:
         recent_outreach = [dict(r) for r in conn.execute(
             "SELECT * FROM outreach ORDER BY datum_aktualizace DESC LIMIT 5"
         ).fetchall()]
+        # HR Hunter stats
+        try:
+            enrich_total = conn.execute(
+                "SELECT COUNT(DISTINCT firma_norm) FROM firma_kontakty WHERE aktivni = 1"
+            ).fetchone()[0]
+            enrich_named = conn.execute(
+                "SELECT COUNT(DISTINCT firma_norm) FROM firma_kontakty "
+                "WHERE aktivni = 1 AND LENGTH(COALESCE(jmeno,'')) >= 5 "
+                "  AND LENGTH(COALESCE(email,'')) >= 5 "
+                "  AND zdroj NOT LIKE '%pattern_guess%'"
+            ).fetchone()[0]
+            enrich_contacts_total = conn.execute(
+                "SELECT COUNT(*) FROM firma_kontakty WHERE aktivni = 1"
+            ).fetchone()[0]
+        except Exception:
+            enrich_total = enrich_named = enrich_contacts_total = 0
 
     return {
         "aktivni_pozice": aktivni,
@@ -1375,6 +1391,9 @@ def dashboard_stats() -> dict:
         "outreach_odpoved": outreach_odpoved,
         "posledni_scan": posledni_scan[0] if posledni_scan else "—",
         "recent_outreach": recent_outreach,
+        "enrich_firms": enrich_total,
+        "enrich_named_firms": enrich_named,
+        "enrich_contacts": enrich_contacts_total,
     }
 
 

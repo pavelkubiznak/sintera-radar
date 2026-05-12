@@ -49,6 +49,13 @@
         <div class="number" style="color:#6366f1;">{{ d_stats.firmy_celkem }}</div>
         <div class="label" style="color:#6366f1;">Firem celkem</div>
     </a>
+    {% if d_stats.enrich_firms %}
+    <a href="/firmy" class="stat-card" style="text-decoration:none; color:inherit; cursor:pointer; border:2px solid #15803d; background:#f0fdf4;"
+       title="HR Hunter — automaticky vyhledané kontakty z webu firem">
+        <div class="number" style="color:#15803d;">{{ d_stats.enrich_named_firms }}</div>
+        <div class="label" style="color:#15803d;">Firem s HR kontaktem (Hunter)</div>
+    </a>
+    {% endif %}
 </div>
 
 <!-- Surge alerts -->
