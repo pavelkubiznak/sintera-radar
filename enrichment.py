@@ -568,11 +568,20 @@ def extract_contacts_regex(text: str, firma: str = "",
             ctype = "general_email"
             conf = 0.55
 
-        # Try to find a name near the email
-        jmeno, pozice = _extract_name_near(text, email, firma=firma)
-        if jmeno and not is_generic:
-            ctype = "named_person" if is_hr or "hr" in (pozice or "").lower() else ctype
-            conf = min(0.95, conf + 0.10)
+        # First, try to parse the name from the email itself (jmeno.prijmeni@…)
+        # This is MUCH more reliable than scanning surrounding text.
+        jmeno_email = _parse_name_from_email(local_part)
+        if jmeno_email:
+            jmeno, pozice = jmeno_email, ""
+            ctype = "person_email" if not is_hr else "named_person"
+            conf = min(0.85, conf + 0.10)
+        else:
+            # Fallback: find a name in nearby text
+            jmeno, pozice = _extract_name_near(text, email, firma=firma)
+            if jmeno and not is_generic:
+                ctype = "named_person" if is_hr or "hr" in (pozice or "").lower() else ctype
+                # Lower confidence — text-proximity matching is fragile
+                conf = min(0.80, conf + 0.05)
 
         contacts.append({
             "typ": ctype,
@@ -672,6 +681,53 @@ def _looks_like_name(first: str, last: str) -> bool:
                or len(l) >= 4)
     first_ok = len(f) >= 3 and not f.endswith(("ní", "vé", "skou"))
     return first_ok and last_ok
+
+
+_EMAIL_NAME_NOISE = {
+    "info", "kontakt", "kontakty", "office", "support", "sales",
+    "obchod", "marketing", "press", "media", "data", "general",
+    "kariera", "career", "careers", "jobs", "prace", "nabor",
+    "hr", "personal", "personalni", "personalka",
+    "recepce", "kancelar", "fakturace", "obchodni", "produkt",
+    "no-reply", "noreply", "do-not-reply",
+    "socialni", "stanicni", "vedouci", "manager", "admin",
+    "podpora", "stiznost", "podnety", "udrzba",
+}
+
+_CZ_NAME_TOKEN_RE = re.compile(r"^[a-z][a-z0-9_-]{1,}$")
+
+
+def _parse_name_from_email(local_part: str) -> str:
+    """If email local-part looks like 'first.last' (or 'first_last'),
+    return 'First Last' with proper capitalization. Else return ''.
+
+    Filters obvious role-based addresses (info, kariera, hr, etc.).
+    """
+    if not local_part:
+        return ""
+    # Strip trailing digits (jana.novakova2 → jana.novakova)
+    lp = re.sub(r"\d+$", "", local_part)
+    # Must contain a separator
+    if not re.search(r"[._\-]", lp):
+        return ""
+    # Split on . _ -
+    parts = re.split(r"[._\-]+", lp)
+    parts = [p for p in parts if p]
+    if len(parts) < 2 or len(parts) > 4:
+        return ""
+    # Reject if any part is a role keyword
+    for p in parts:
+        if p.lower() in _EMAIL_NAME_NOISE:
+            return ""
+        if not _CZ_NAME_TOKEN_RE.match(p.lower()):
+            return ""
+        if len(p) < 2:
+            return ""
+    # Capitalize each part (also handles foreign names)
+    titled = [p.capitalize() for p in parts]
+    # For Czech, restore diacritics heuristically by looking at common names? Not reliable.
+    # Just use ASCII title-case — users will recognize it.
+    return " ".join(titled)
 
 
 def _extract_name_near(text: str, anchor: str, firma: str = "") -> tuple:
