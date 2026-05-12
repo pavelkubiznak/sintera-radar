@@ -23,7 +23,7 @@ from database import (init_db, uloz_nabidky, nacti_nabidky, statistiky, exportuj
                        normalize_company, firma_detail, dashboard_stats,
                        filtr_pozice, firmy_prehled, firma_search, firma_bulk_lookup,
                        generate_missile_dms, salary_benchmark, analytics_export_data,
-                       generate_dm_for_position)
+                       generate_dm_for_position, obory_with_counts, OBORY_DISPLAY)
 
 app = Flask(__name__)
 init_db()
@@ -216,10 +216,15 @@ def firmy_page():
     sort = request.args.get("sort", "pozic")
     page = int(request.args.get("page", 1))
     kraj = request.args.get("kraj", "")
-    data = firmy_prehled(sort=sort, page=page, per_page=50, kraj=kraj)
+    obor = request.args.get("obor", "")
+    data = firmy_prehled(sort=sort, page=page, per_page=50,
+                          kraj=kraj, obor=obor)
     return render_template("firmy.html",
-                           data=data, sort=sort, page=page, kraj=kraj,
-                           kraje=KRAJE)
+                           data=data, sort=sort, page=page,
+                           kraj=kraj, obor=obor,
+                           kraje=KRAJE,
+                           obory=obory_with_counts(),
+                           OBORY_DISPLAY=OBORY_DISPLAY)
 
 
 @app.route("/firmy/bulk", methods=["GET", "POST"])

@@ -1653,11 +1653,62 @@ def firma_bulk_lookup(names: list) -> list:
     return results
 
 
+# ── Industry (obor) display names — slug → human-readable ──
+OBORY_DISPLAY = {
+    "strojirenstvi": "Strojírenství",
+    "technika-a-vyvoj": "Technika a vývoj",
+    "elektrotechnika-a-energetika": "Elektrotechnika a energetika",
+    "vyroba-a-prumysl": "Výroba a průmysl",
+    "veda-a-vyzkum": "Věda a výzkum",
+    "chemicky-prumysl": "Chemický průmysl",
+    "doprava-logistika-a-zasobovani": "Doprava, logistika a zásobování",
+    "farmacie": "Farmacie",
+    "ekonomika-a-podnikove-finance": "Ekonomika a podnikové finance",
+    "kvalita-a-kontrola-jakosti": "Kvalita a kontrola jakosti",
+    "remeslne-a-manualni-prace": "Řemeslné a manuální práce",
+    "nakup": "Nákup",
+    "personalistika-a-hr": "Personalistika a HR",
+    "vrcholovy-management": "Vrcholový management",
+    "telekomunikace": "Telekomunikace",
+    "zakaznicky-servis": "Zákaznický servis",
+    "is-it-konzultace-analyzy-a-projektove-rizeni": "IT konzultace a projektové řízení",
+    "is-it-sprava-systemu-a-hw": "IT správa systémů a HW",
+    "is-it-vyvoj-aplikaci-a-systemu": "IT vývoj aplikací a systémů",
+    "bankovnictvi-a-financni-sluzby": "Bankovnictví a finanční služby",
+    "marketing": "Marketing",
+    "prodej-a-obchod": "Prodej a obchod",
+    "administrativa": "Administrativa",
+    "zdravotnictvi-a-socialni-pece": "Zdravotnictví a sociální péče",
+    "stavebnictvi-a-reality": "Stavebnictví a reality",
+}
+
+
+def obory_with_counts() -> list:
+    """Returns list of [(slug, display_name, active_position_count)]
+    sorted by count descending. Used for the industry filter dropdown."""
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT obor, COUNT(*) as cnt
+            FROM nabidky
+            WHERE aktivni = 1 AND obor IS NOT NULL AND obor != ''
+              AND is_agency = 0
+            GROUP BY obor
+            ORDER BY cnt DESC
+        """).fetchall()
+    out = []
+    for r in rows:
+        slug = r["obor"]
+        out.append((slug, OBORY_DISPLAY.get(slug, slug), r["cnt"]))
+    return out
+
+
 def firmy_prehled(sort: str = "pozic", page: int = 1, per_page: int = 50,
-                  kraj: str = "") -> dict:
+                  kraj: str = "", obor: str = "") -> dict:
     """Returns paginated company list with sorting.
     sort: 'pozic' | 'opakovane' | 'problematicke' | 'firma'
-    Returns: {firmy: [...], total: int, page: int, pages: int}
+    obor: industry slug filter (one of the keys from OBORY_DISPLAY)
+    Returns: {firmy: [...], total: int, page: int, pages: int,
+              obory_per_firma: {firma_norm: [...slugs]}}
     """
     na = "AND is_agency = 0"
     kraj_filter = ""
@@ -1665,6 +1716,10 @@ def firmy_prehled(sort: str = "pozic", page: int = 1, per_page: int = 50,
     if kraj:
         kraj_filter = "AND kraj = ?"
         params.append(kraj)
+    obor_filter = ""
+    if obor:
+        obor_filter = "AND obor = ?"
+        params.append(obor)
 
     order = {
         "pozic": "pocet_pozic DESC",
@@ -1677,7 +1732,7 @@ def firmy_prehled(sort: str = "pozic", page: int = 1, per_page: int = 50,
         # Total count
         total = conn.execute(f"""
             SELECT COUNT(DISTINCT firma) FROM nabidky
-            WHERE aktivni = 1 AND firma != '' {na} {kraj_filter}
+            WHERE aktivni = 1 AND firma != '' {na} {kraj_filter} {obor_filter}
         """, params).fetchone()[0]
 
         offset = (page - 1) * per_page
@@ -1691,9 +1746,10 @@ def firmy_prehled(sort: str = "pozic", page: int = 1, per_page: int = 50,
                    SUM(CASE WHEN pocet_scanu >= 4 THEN 1 ELSE 0 END) as problematickych,
                    MAX(pocet_scanu) as max_scanu,
                    MIN(datum_prvni_scan) as nejstarsi,
-                   GROUP_CONCAT(DISTINCT kraj) as kraje
+                   GROUP_CONCAT(DISTINCT kraj) as kraje,
+                   GROUP_CONCAT(DISTINCT obor) as obory
             FROM nabidky
-            WHERE aktivni = 1 AND firma != '' {na} {kraj_filter}
+            WHERE aktivni = 1 AND firma != '' {na} {kraj_filter} {obor_filter}
             GROUP BY firma
             ORDER BY {order}
             LIMIT ? OFFSET ?
@@ -1701,6 +1757,18 @@ def firmy_prehled(sort: str = "pozic", page: int = 1, per_page: int = 50,
 
     firmy = []
     for r in rows:
+        # Parse obors into list of (slug, display) tuples, up to top 3
+        obors_raw = (r["obory"] or "").split(",")
+        obors = []
+        seen = set()
+        for s in obors_raw:
+            s = s.strip()
+            if s and s not in seen:
+                obors.append({
+                    "slug": s,
+                    "display": OBORY_DISPLAY.get(s, s),
+                })
+                seen.add(s)
         firmy.append({
             "firma": r["firma"],
             "firma_norm": normalize_company(r["firma"]),
@@ -1710,6 +1778,7 @@ def firmy_prehled(sort: str = "pozic", page: int = 1, per_page: int = 50,
             "max_scanu": r["max_scanu"],
             "nejstarsi": r["nejstarsi"],
             "kraje": r["kraje"] or "",
+            "obory": obors[:5],  # top 5 industries per firma
         })
 
     return {"firmy": firmy, "total": total, "page": page, "pages": pages}

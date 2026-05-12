@@ -32,35 +32,62 @@
 <!-- Sort tabs -->
 <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; align-items:center;">
     <span style="color:#64748b; font-size:0.85em; font-weight:600;">Radit podle:</span>
-    <a href="/firmy?sort=pozic{% if kraj %}&kraj={{ kraj }}{% endif %}"
+    <a href="/firmy?sort=pozic{% if kraj %}&kraj={{ kraj }}{% endif %}{% if obor %}&obor={{ obor }}{% endif %}"
        class="btn {% if sort == 'pozic' %}btn-primary{% else %}btn-outline{% endif %} btn-sm">
         Poctu pozic
     </a>
-    <a href="/firmy?sort=opakovane{% if kraj %}&kraj={{ kraj }}{% endif %}"
+    <a href="/firmy?sort=opakovane{% if kraj %}&kraj={{ kraj }}{% endif %}{% if obor %}&obor={{ obor }}{% endif %}"
        class="btn {% if sort == 'opakovane' %}btn-primary{% else %}btn-outline{% endif %} btn-sm"
        style="{% if sort == 'opakovane' %}background:#7c3aed; border-color:#7c3aed;{% endif %}">
         Opakovanych zadani
     </a>
-    <a href="/firmy?sort=problematicke{% if kraj %}&kraj={{ kraj }}{% endif %}"
+    <a href="/firmy?sort=problematicke{% if kraj %}&kraj={{ kraj }}{% endif %}{% if obor %}&obor={{ obor }}{% endif %}"
        class="btn {% if sort == 'problematicke' %}btn-primary{% else %}btn-outline{% endif %} btn-sm"
        style="{% if sort == 'problematicke' %}background:#ea580c; border-color:#ea580c;{% endif %}">
         Problematickych pozic
     </a>
-    <a href="/firmy?sort=firma{% if kraj %}&kraj={{ kraj }}{% endif %}"
+    <a href="/firmy?sort=firma{% if kraj %}&kraj={{ kraj }}{% endif %}{% if obor %}&obor={{ obor }}{% endif %}"
        class="btn {% if sort == 'firma' %}btn-primary{% else %}btn-outline{% endif %} btn-sm">
         Abecedne
     </a>
 </div>
 
-<!-- Region filter -->
-<div style="margin-bottom:16px;">
-    <select onchange="window.location='/firmy?sort={{ sort }}&kraj='+this.value" style="padding:6px 12px; border:1.5px solid #d1d5db; border-radius:7px; font-size:0.88rem;">
+<!-- Region + Industry filters -->
+<div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap; align-items:center;">
+    <span style="color:#64748b; font-size:0.85em; font-weight:600;">Filtr:</span>
+    <select onchange="updateFilter('kraj', this.value)" style="padding:6px 12px; border:1.5px solid #d1d5db; border-radius:7px; font-size:0.88rem;">
         <option value="">Vsechny kraje</option>
         {% for kod, (nazev, slug) in kraje.items() %}
         <option value="{{ nazev }}" {% if kraj == nazev %}selected{% endif %}>{{ nazev }}</option>
         {% endfor %}
     </select>
+    <select onchange="updateFilter('obor', this.value)" style="padding:6px 12px; border:1.5px solid #d1d5db; border-radius:7px; font-size:0.88rem; max-width:300px;">
+        <option value="">Vsechny obory</option>
+        {% for slug, display, cnt in obory %}
+        <option value="{{ slug }}" {% if obor == slug %}selected{% endif %}>{{ display }} ({{ cnt }})</option>
+        {% endfor %}
+    </select>
+    {% if obor or kraj %}
+    <a href="/firmy?sort={{ sort }}" style="color:#6366f1; font-size:0.85em; text-decoration:none;">
+        &times; Zrusit filtry
+    </a>
+    {% endif %}
 </div>
+
+{% if obor %}
+<div style="margin-bottom:16px; padding:10px 14px; background:#eef2ff; border-left:3px solid #6366f1; border-radius:6px; font-size:0.88em; color:#1e1b4b;">
+    Zobrazeno: <strong>{{ OBORY_DISPLAY.get(obor, obor) }}</strong> &middot; {{ data.total }} firem
+</div>
+{% endif %}
+
+<script>
+function updateFilter(name, value) {
+    var p = new URLSearchParams(window.location.search);
+    if (value) { p.set(name, value); } else { p.delete(name); }
+    p.delete('page');  // reset pagination when filter changes
+    window.location = '/firmy?' + p.toString();
+}
+</script>
 
 <!-- Company table -->
 <div class="card" style="padding:0; overflow-x:auto;">
@@ -85,6 +112,17 @@
                 <a class="firma-link" href="/firma/{{ f.firma_norm }}">
                     <strong>{{ f.firma }}</strong>
                 </a>
+                {% if f.obory %}
+                <div style="margin-top:3px; display:flex; gap:4px; flex-wrap:wrap;">
+                    {% for o in f.obory %}
+                    <a href="/firmy?obor={{ o.slug }}{% if kraj %}&kraj={{ kraj }}{% endif %}&sort={{ sort }}"
+                       style="background:#eef2ff; color:#4338ca; padding:1px 6px; border-radius:4px; font-size:10px; font-weight:600; text-decoration:none; white-space:nowrap;"
+                       title="Filtrovat firmy v oboru: {{ o.display }}">
+                        {{ o.display }}
+                    </a>
+                    {% endfor %}
+                </div>
+                {% endif %}
             </td>
             <td style="font-size:0.8em; color:#64748b; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
                 {{ f.kraje }}
@@ -135,7 +173,7 @@
 {% if data.pages > 1 %}
 <div style="display:flex; gap:8px; align-items:center; margin-top:16px; flex-wrap:wrap;">
     {% if data.page > 1 %}
-    <a href="/firmy?sort={{ sort }}&page={{ data.page - 1 }}{% if kraj %}&kraj={{ kraj }}{% endif %}"
+    <a href="/firmy?sort={{ sort }}&page={{ data.page - 1 }}{% if kraj %}&kraj={{ kraj }}{% endif %}{% if obor %}&obor={{ obor }}{% endif %}"
        class="btn btn-outline btn-sm">Predchozi</a>
     {% endif %}
 
@@ -143,7 +181,7 @@
         {% if p == data.page %}
         <span class="btn btn-primary btn-sm">{{ p }}</span>
         {% elif p <= 3 or p >= data.pages - 1 or (p >= data.page - 1 and p <= data.page + 1) %}
-        <a href="/firmy?sort={{ sort }}&page={{ p }}{% if kraj %}&kraj={{ kraj }}{% endif %}"
+        <a href="/firmy?sort={{ sort }}&page={{ p }}{% if kraj %}&kraj={{ kraj }}{% endif %}{% if obor %}&obor={{ obor }}{% endif %}"
            class="btn btn-outline btn-sm">{{ p }}</a>
         {% elif p == 4 or p == data.pages - 2 %}
         <span class="text-muted">...</span>
@@ -151,7 +189,7 @@
     {% endfor %}
 
     {% if data.page < data.pages %}
-    <a href="/firmy?sort={{ sort }}&page={{ data.page + 1 }}{% if kraj %}&kraj={{ kraj }}{% endif %}"
+    <a href="/firmy?sort={{ sort }}&page={{ data.page + 1 }}{% if kraj %}&kraj={{ kraj }}{% endif %}{% if obor %}&obor={{ obor }}{% endif %}"
        class="btn btn-outline btn-sm">Dalsi</a>
     {% endif %}
 
