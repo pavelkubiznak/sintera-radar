@@ -366,6 +366,34 @@ def api_enrich_status(job_id):
     return jsonify({"ok": True, **job})
 
 
+@app.route("/api/enrich-needs")
+def api_enrich_needs():
+    """List firms that need enrichment (problematic, no LinkedIn DM,
+    not recently scraped)."""
+    from enrichment import find_firms_needing_enrichment
+    limit = int(request.args.get("limit", 50))
+    candidates = find_firms_needing_enrichment(limit=limit)
+    return jsonify({
+        "count": len(candidates),
+        "firms": [{"firma": f, "firma_norm": n} for f, n in candidates],
+    })
+
+
+@app.route("/api/enrich-auto", methods=["POST"])
+def api_enrich_auto():
+    """Trigger automatic enrichment of needs-enrichment firms.
+    Body: {limit?: int}. Returns: {job_id} (runs in background)."""
+    from enrichment import find_firms_needing_enrichment, bulk_enrich_start
+    data = request.get_json(silent=True) or {}
+    limit = int(data.get("limit", 30))
+    candidates = find_firms_needing_enrichment(limit=limit)
+    if not candidates:
+        return jsonify({"ok": True, "job_id": None, "total": 0,
+                        "message": "No firms need enrichment right now."})
+    job_id = bulk_enrich_start(candidates)
+    return jsonify({"ok": True, "job_id": job_id, "total": len(candidates)})
+
+
 @app.route("/scraper")
 def scraper_page():
     stats = statistiky()

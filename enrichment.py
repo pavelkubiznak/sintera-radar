@@ -199,38 +199,63 @@ def _strip_diacritics(s: str) -> str:
 def _firma_to_domain_candidates(firma_name: str) -> list:
     """Generate plausible domain candidates from company name.
     'TEDOM a.s.' → ['tedom.cz', 'tedom.com', 'tedom.eu']
-    'Škoda Auto a.s.' → ['skodaauto.cz', 'skoda-auto.cz', 'skoda.cz', ...]
+    'CREDITAS Group' → ['creditas.cz', 'creditasgroup.cz', 'creditas-group.cz', ...]
+    'Škoda Auto a.s.' → ['skoda.cz', 'skodaauto.cz', 'skoda-auto.cz', ...]
     """
-    s = firma_name.lower()
-    # Strip legal forms + punctuation
-    s = re.sub(
+    s_raw = firma_name.lower()
+
+    # Two cleanings:
+    # (1) Strip *only* legal forms (a.s., s.r.o., gmbh, etc.) — keep
+    #     descriptors like "group", "holding", "international" because
+    #     they're often part of the brand domain (creditasgroup.cz)
+    s_with_desc = re.sub(
         r"\b(s\.?\s*r\.?\s*o\.?|a\.?\s*s\.?|spol\.?\s*s\s*r\.?\s*o\.?"
-        r"|v\.?\s*o\.?\s*s\.?|k\.?\s*s\.?|gmbh|ltd|inc|corp|plc|ag|group|holding"
-        r"|česká republika|česko|czech republic|czechia"
-        r"|international|europe|cee"
-        r"|o\.?\s*p\.?\s*s\.?|z\.?\s*s\.?|z\.?\s*ú\.?)\b",
-        "", s, flags=re.IGNORECASE,
+        r"|v\.?\s*o\.?\s*s\.?|k\.?\s*s\.?|gmbh|ltd|inc|corp|plc|ag"
+        r"|o\.?\s*p\.?\s*s\.?|z\.?\s*s\.?|z\.?\s*ú\.?"
+        r"|příspěvková\s+organizace|státní\s+organizace)\b",
+        "", s_raw, flags=re.IGNORECASE,
     )
-    s = _strip_diacritics(s)
-    s = re.sub(r"[^a-z0-9\s\-]", " ", s)
-    s = re.sub(r"\s+", " ", s).strip()
-    words = [w for w in s.split() if len(w) >= 2]
-    if not words:
+    # (2) Also strip descriptors for the "brand-only" guess
+    s_brand = re.sub(
+        r"\b(group|holding|česká\s+republika|česko|czech\s+republic"
+        r"|czechia|international|europe|cee)\b",
+        "", s_with_desc, flags=re.IGNORECASE,
+    )
+
+    def _tokenize(s):
+        s = _strip_diacritics(s)
+        s = re.sub(r"[^a-z0-9\s\-]", " ", s)
+        s = re.sub(r"\s+", " ", s).strip()
+        return [w for w in s.split() if len(w) >= 2]
+
+    words_brand = _tokenize(s_brand)
+    words_full = _tokenize(s_with_desc)
+
+    if not words_brand and not words_full:
         return []
 
-    # First word is usually the brand → highest priority
-    first = words[0]
-    first_two = "".join(words[:2]) if len(words) >= 2 else ""
-    first_two_hyphen = "-".join(words[:2]) if len(words) >= 2 else ""
-    full_concat = "".join(words)
-    full_hyphen = "-".join(words)
-
-    # Preferred order: brand first (most common), then two-word, then full
+    # Build base name candidates
     base_names = []
-    for name in [first, first_two, first_two_hyphen,
-                  full_concat, full_hyphen]:
+
+    def _add(name):
         if name and name not in base_names and len(name) >= 3:
             base_names.append(name)
+
+    # Brand-only variants (highest priority — usually the right domain)
+    if words_brand:
+        _add(words_brand[0])  # first word: "creditas", "tedom", "skoda"
+        if len(words_brand) >= 2:
+            _add("".join(words_brand[:2]))            # "creditas group" → "creditasgroup"
+            _add("-".join(words_brand[:2]))
+
+    # Full-name variants (with descriptors retained — for "creditasgroup")
+    if words_full and words_full != words_brand:
+        _add(words_full[0])
+        if len(words_full) >= 2:
+            _add("".join(words_full[:2]))             # "creditasgroup"
+            _add("-".join(words_full[:2]))            # "creditas-group"
+            _add("".join(words_full))                 # all words joined
+            _add("-".join(words_full))                # all words hyphenated
 
     candidates = []
     for base in base_names:
@@ -245,22 +270,31 @@ def _firma_to_domain_candidates(firma_name: str) -> list:
         if c not in seen:
             seen.add(c)
             out.append(c)
-    return out[:24]  # don't try more than 24 variations
+    return out[:32]  # increased budget for variations
 
 
 def find_website(firma_name: str, ico: str = "") -> Optional[str]:
-    """Find company website. Returns URL or None.
-
-    Strategy:
-      1. Try ARES detail (if ICO provided)
-      2. Generate plausible domains and HEAD-check them
-      3. Pick first that responds with 200 and looks like a real site
-    """
-    # 1. Try direct domain candidates (fastest)
+    """Find company website. Returns URL or None."""
     for url in _firma_to_domain_candidates(firma_name):
         if _domain_responds(url):
             return _normalize_url(url)
     return None
+
+
+def find_websites(firma_name: str, ico: str = "",
+                   max_results: int = 3) -> list:
+    """Find up to N plausible company websites in priority order.
+    Used by enrich_firma to fall back to alternative domains when the
+    first one yields no contacts."""
+    found = []
+    for url in _firma_to_domain_candidates(firma_name):
+        if _domain_responds(url):
+            n = _normalize_url(url)
+            if n not in found:
+                found.append(n)
+                if len(found) >= max_results:
+                    break
+    return found
 
 
 def _normalize_url(url: str) -> str:
@@ -274,19 +308,31 @@ def _normalize_url(url: str) -> str:
 
 
 def _domain_responds(url: str) -> bool:
-    """Quick HEAD check — does this domain resolve and return 200?"""
+    """Quick check — does this domain resolve and return reasonable content?
+    Many sites refuse HEAD or return 403 for bot-like UAs; we fall back to GET."""
     try:
-        r = _lazy_requests().head(url, headers=_HEADERS, timeout=6,
+        r = _lazy_requests().head(url, headers=_HEADERS, timeout=5,
                                    allow_redirects=True, verify=True)
-        # Some sites refuse HEAD — try GET
-        if r.status_code in (405, 501):
+        if 200 <= r.status_code < 400:
+            return True
+        # Many sites refuse HEAD or block bot UAs → try GET
+        if r.status_code in (403, 405, 501, 502, 503):
             r = _lazy_requests().get(url, headers=_HEADERS, timeout=8,
                                       allow_redirects=True, verify=True,
                                       stream=True)
             r.close()
-        return 200 <= r.status_code < 400
-    except Exception:
+            return 200 <= r.status_code < 400
         return False
+    except Exception:
+        # Even if HEAD fails entirely, try a plain GET
+        try:
+            r = _lazy_requests().get(url, headers=_HEADERS, timeout=8,
+                                      allow_redirects=True, verify=True,
+                                      stream=True)
+            r.close()
+            return 200 <= r.status_code < 400
+        except Exception:
+            return False
 
 
 # ── Page discovery & fetching ─────────────────────────────────────
@@ -523,7 +569,7 @@ def extract_contacts_regex(text: str, firma: str = "",
             conf = 0.55
 
         # Try to find a name near the email
-        jmeno, pozice = _extract_name_near(text, email)
+        jmeno, pozice = _extract_name_near(text, email, firma=firma)
         if jmeno and not is_generic:
             ctype = "named_person" if is_hr or "hr" in (pozice or "").lower() else ctype
             conf = min(0.95, conf + 0.10)
@@ -568,7 +614,7 @@ def extract_contacts_regex(text: str, firma: str = "",
             ctype = "phone"
             conf = 0.5
 
-        jmeno, pozice = _extract_name_near(text, raw)
+        jmeno, pozice = _extract_name_near(text, raw, firma=firma)
         contacts.append({
             "typ": ctype,
             "jmeno": jmeno or "",
@@ -628,7 +674,7 @@ def _looks_like_name(first: str, last: str) -> bool:
     return first_ok and last_ok
 
 
-def _extract_name_near(text: str, anchor: str) -> tuple:
+def _extract_name_near(text: str, anchor: str, firma: str = "") -> tuple:
     """Search for a Czech-looking name within ±250 chars of an anchor.
     Returns (full_name, position_title) or ('', '')."""
     if not anchor or anchor not in text:
@@ -638,10 +684,25 @@ def _extract_name_near(text: str, anchor: str) -> tuple:
     end = min(len(text), pos + 300)
     ctx = text[start:end]
 
+    # Build firma word set to exclude from name extraction
+    firma_words = set()
+    if firma:
+        for w in re.split(r"[\s.,\-/&()]+", firma.lower()):
+            if len(w) >= 3:
+                firma_words.add(w)
+                firma_words.add(_strip_diacritics(w))
+
     candidates = []
     for m in _CZ_NAME_RE.finditer(ctx):
         first, last = m.group(1), m.group(2)
         if not _looks_like_name(first, last):
+            continue
+        # Reject if either word matches the firma name
+        fl = first.lower()
+        ll = last.lower()
+        if (fl in firma_words or ll in firma_words
+                or _strip_diacritics(fl) in firma_words
+                or _strip_diacritics(ll) in firma_words):
             continue
         full = "{} {}".format(first, last)
         name_pos = m.start()
@@ -920,29 +981,36 @@ def enrich_firma(firma_name: str, firma_norm: str = "",
     except Exception as e:
         result["errors"].append("ARES: " + str(e))
 
-    # ── Step 2: Find website ──
+    # ── Step 2: Find website (up to 3 candidates for fallback) ──
+    websites = []
     try:
-        website = find_website(firma_name, ico=result["ico"])
-        if website:
-            result["website"] = website
-            result["sources_tried"].append("website:" + website)
+        websites = find_websites(firma_name, ico=result["ico"], max_results=3)
+        if websites:
+            result["website"] = websites[0]
+            result["sources_tried"].append("website:" + websites[0])
     except Exception as e:
-        result["errors"].append("find_website: " + str(e))
+        result["errors"].append("find_websites: " + str(e))
 
     all_contacts = []
 
-    # ── Step 3: Scrape website pages ──
-    if result["website"]:
+    # ── Step 3: Scrape website pages — try alt domains if first yields nothing ──
+    def _useful_contacts(contacts):
+        return [c for c in contacts
+                if (c.get("email") or c.get("telefon"))
+                and (c.get("zdroj") or "").startswith("http")]
+
+    for idx, ws in enumerate(websites):
         try:
-            pages = fetch_pages(result["website"], max_pages=6)
-            result["sources_tried"].append("pages:" + str(len(pages)))
+            pages = fetch_pages(ws, max_pages=6)
+            if idx == 0:
+                result["sources_tried"].append("pages:" + str(len(pages)))
+            else:
+                result["sources_tried"].append("alt_domain:" + ws + ":pages:" + str(len(pages)))
             for url, html in pages.items():
                 text = page_to_text(html)
-                # Regex extraction (always)
                 regex_contacts = extract_contacts_regex(
                     text, firma=firma_name, source_url=url)
                 all_contacts.extend(regex_contacts)
-                # LLM extraction (if API key available, only on contact/career pages)
                 if _lazy_anthropic() and any(p in url.lower() for p in
                                               ("kontakt", "contact", "kariera",
                                                "career", "team", "lide", "vedeni")):
@@ -952,7 +1020,14 @@ def enrich_firma(firma_name: str, firma_norm: str = "",
                     if llm_contacts:
                         result["sources_tried"].append("LLM:" + url)
         except Exception as e:
-            result["errors"].append("fetch_pages: " + str(e))
+            result["errors"].append("fetch_pages[{}]: {}".format(idx, str(e)))
+
+        # If first website yielded useful contacts, stop here
+        if idx == 0 and len(_useful_contacts(all_contacts)) >= 1:
+            break
+        # If we've tried 2 websites and have nothing, one more attempt
+        if idx >= 1 and len(_useful_contacts(all_contacts)) >= 1:
+            break
 
     # ── Step 4: Personálka.cz (if we have IČO) ──
     if result["ico"]:
@@ -1204,3 +1279,82 @@ def bulk_enrich_start(firmas: list) -> str:
 
 def bulk_enrich_status(job_id: str) -> Optional[dict]:
     return _bulk_jobs.get(job_id)
+
+
+# ── Auto-enrich: pick problematic firms missing contacts ──────────
+
+def find_firms_needing_enrichment(limit: int = 50,
+                                    min_pozic: int = 3,
+                                    days_since_last_attempt: int = 7) -> list:
+    """Find problematic firms (3+ active pozic, no LinkedIn DM, not recently
+    enriched). Returns list of (firma, firma_norm) ready to be enriched.
+
+    Order: most problematic first (aktualizované × pocet_pozic).
+    """
+    from database import get_conn, normalize_company
+
+    with get_conn() as conn:
+        # Step 1: candidate firms — active, multiple positions, no agency
+        rows = conn.execute("""
+            SELECT n.firma,
+                   COUNT(*) as pocet_pozic,
+                   SUM(CASE WHEN publikovano LIKE '%ktualizov%' THEN 1 ELSE 0 END) as aktual,
+                   SUM(CASE WHEN predchozi_job_id IS NOT NULL
+                            AND predchozi_job_id != '' THEN 1 ELSE 0 END) as opak,
+                   SUM(CASE WHEN pocet_scanu >= 4 THEN 1 ELSE 0 END) as probl
+            FROM nabidky n
+            WHERE n.aktivni = 1 AND n.firma != '' AND n.is_agency = 0
+            GROUP BY n.firma
+            HAVING pocet_pozic >= ?
+            ORDER BY (aktual * 3 + opak * 2 + probl) DESC, pocet_pozic DESC
+        """, (min_pozic,)).fetchall()
+
+        # Step 2: firms that already have LinkedIn DM
+        dm_norms = {r[0] for r in conn.execute(
+            "SELECT DISTINCT company_normalized FROM decision_makers "
+            "WHERE current_company != ''"
+        )}
+
+        # Step 3: firms already enriched recently
+        from datetime import timedelta
+        threshold = (datetime.now() - timedelta(days=days_since_last_attempt)
+                     ).isoformat(timespec="seconds")
+        recently_enriched = {r[0] for r in conn.execute(
+            "SELECT DISTINCT firma_norm FROM enrich_log WHERE datum >= ?",
+            (threshold,)
+        )}
+
+    candidates = []
+    for r in rows:
+        firma = r["firma"]
+        norm = normalize_company(firma)
+        if norm in dm_norms:
+            continue  # already has LinkedIn DM
+        if norm in recently_enriched:
+            continue  # already tried recently
+        candidates.append((firma, norm))
+        if len(candidates) >= limit:
+            break
+    return candidates
+
+
+def nightly_auto_enrich(limit: int = 30) -> dict:
+    """Run enrichment on a batch of needs-enrichment firms.
+    Designed to be called by a daily cron after the scraper finishes.
+
+    Returns: {processed, success, partial, failed, total_contacts}
+    """
+    candidates = find_firms_needing_enrichment(limit=limit)
+    stats = {"processed": 0, "success": 0, "partial": 0,
+             "failed": 0, "total_contacts": 0}
+    for firma, norm in candidates:
+        try:
+            r = enrich_firma(firma, norm)
+            saved = save_enrichment_result(r)
+            stats["processed"] += 1
+            stats[r.get("status", "failed")] = stats.get(r.get("status", "failed"), 0) + 1
+            stats["total_contacts"] += saved
+        except Exception:
+            stats["failed"] = stats.get("failed", 0) + 1
+            stats["processed"] += 1
+    return stats

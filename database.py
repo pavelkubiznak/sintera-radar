@@ -1822,8 +1822,11 @@ def firmy_prehled(sort: str = "pozic", page: int = 1, per_page: int = 50,
         """, params + [per_page, offset]).fetchall()
 
     firmy = []
+    norms = []
     for r in rows:
-        # Parse obors into list of (slug, display) tuples, up to top 3
+        firma_norm = normalize_company(r["firma"])
+        norms.append(firma_norm)
+        # Parse obors
         obors_raw = (r["obory"] or "").split(",")
         obors = []
         seen = set()
@@ -1837,15 +1840,41 @@ def firmy_prehled(sort: str = "pozic", page: int = 1, per_page: int = 50,
                 seen.add(s)
         firmy.append({
             "firma": r["firma"],
-            "firma_norm": normalize_company(r["firma"]),
+            "firma_norm": firma_norm,
             "pocet_pozic": r["pocet_pozic"],
             "opakovanych": r["opakovanych"],
             "problematickych": r["problematickych"],
             "max_scanu": r["max_scanu"],
             "nejstarsi": r["nejstarsi"],
             "kraje": r["kraje"] or "",
-            "obory": obors[:5],  # top 5 industries per firma
+            "obory": obors[:5],
+            "kontakty_count": 0,
+            "has_named_contact": False,
         })
+
+    # Bulk-fetch contact counts for visible firms
+    if norms:
+        placeholders = ",".join(["?"] * len(norms))
+        with get_conn() as conn:
+            try:
+                counts = conn.execute(
+                    "SELECT firma_norm, COUNT(*) as c, "
+                    "  SUM(CASE WHEN LENGTH(COALESCE(jmeno,'')) >= 5 "
+                    "    AND LENGTH(COALESCE(email,'')) >= 5 "
+                    "    AND zdroj NOT LIKE '%pattern_guess%' "
+                    "    THEN 1 ELSE 0 END) as named "
+                    "FROM firma_kontakty "
+                    "WHERE firma_norm IN ({}) AND aktivni = 1 "
+                    "GROUP BY firma_norm".format(placeholders),
+                    norms
+                ).fetchall()
+                count_map = {r["firma_norm"]: (r["c"], r["named"]) for r in counts}
+                for f in firmy:
+                    c, n = count_map.get(f["firma_norm"], (0, 0))
+                    f["kontakty_count"] = c
+                    f["has_named_contact"] = (n or 0) > 0
+            except Exception:
+                pass
 
     return {"firmy": firmy, "total": total, "page": page, "pages": pages}
 

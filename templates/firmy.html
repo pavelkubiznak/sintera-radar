@@ -28,6 +28,11 @@
                 title="Spustí HR Hunter pro označené firmy (max 50)">
             HR Hunter — obohatit označené
         </button>
+        <button class="btn btn-outline btn-sm" id="auto-enrich-btn"
+                onclick="startAutoEnrich()" style="white-space:nowrap;"
+                title="Najde problémové firmy bez kontaktů a obohatí je (30 ks)">
+            Auto-enrich problémové
+        </button>
     </div>
     <div style="margin-top:8px; font-size:0.8em; color:#888;">
         Tip: ve vrchnim sidebaru je vyhledavani vzdy po ruce. Stiskni <kbd style="background:#f1f5f9; border:1px solid #d1d5db; border-radius:3px; padding:1px 5px; font-family:monospace;">/</kbd> kdekoli.
@@ -137,6 +142,21 @@ function updateFilter(name, value) {
                 <a class="firma-link" href="/firma/{{ f.firma_norm }}">
                     <strong>{{ f.firma }}</strong>
                 </a>
+                {% if f.kontakty_count > 0 %}
+                <div style="margin-top:2px;">
+                    {% if f.has_named_contact %}
+                    <span style="background:#dcfce7; color:#15803d; padding:1px 6px; border-radius:4px; font-size:10px; font-weight:700;"
+                          title="HR Hunter našel {{ f.kontakty_count }} kontaktů včetně jmenných">
+                        &#10004; {{ f.kontakty_count }} kontaktů
+                    </span>
+                    {% else %}
+                    <span style="background:#fef3c7; color:#a16207; padding:1px 6px; border-radius:4px; font-size:10px; font-weight:600;"
+                          title="HR Hunter našel pouze obecné kontakty">
+                        {{ f.kontakty_count }} obecných
+                    </span>
+                    {% endif %}
+                </div>
+                {% endif %}
                 {% if f.obory %}
                 <div style="margin-top:3px; display:flex; gap:4px; flex-wrap:wrap;">
                     {% for o in f.obory %}
@@ -373,6 +393,34 @@ function startBulkEnrich() {
         progressEl.textContent = 'Chyba: ' + err.message;
         progressEl.style.color = '#dc2626';
     });
+}
+
+function startAutoEnrich() {
+    if (!confirm('Spustit HR Hunter na 30 problémových firmách bez LinkedIn DM? (cca 6-8 minut)')) return;
+    var overlay = document.getElementById('bulk-enrich-overlay');
+    var progressEl = document.getElementById('bulk-enrich-progress');
+    var barEl = document.getElementById('bulk-enrich-bar');
+    var summaryEl = document.getElementById('bulk-enrich-summary');
+    overlay.style.display = 'block';
+    progressEl.textContent = 'Vybírám problémové firmy...';
+    barEl.style.width = '0%';
+    summaryEl.textContent = '';
+
+    fetch('/api/enrich-auto', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({limit: 30}),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (!data.ok || !data.job_id) {
+            progressEl.textContent = data.message || 'Nic k obohacení';
+            return;
+        }
+        progressEl.textContent = 'Spouštím rešerši pro ' + data.total + ' firem...';
+        pollEnrichStatus(data.job_id);
+    })
+    .catch(function(err) { progressEl.textContent = 'Chyba: ' + err.message; });
 }
 
 function pollEnrichStatus(jobId) {
