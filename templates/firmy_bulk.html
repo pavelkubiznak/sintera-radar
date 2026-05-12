@@ -1,0 +1,150 @@
+{% extends "_layout.html" %}
+{% set active_page = 'firmy' %}
+{% block title %}Hromadne vyhledavani firem — Sintera Radar{% endblock %}
+
+{% block content %}
+<div class="main-header">
+    <h1>Hromadne vyhledavani firem</h1>
+    <div class="subtitle">Vloz seznam nazvu firem (jedna na radek, prip. oddelene carkami) a najdi je v databazi.</div>
+</div>
+
+<form method="post" class="card">
+    <label style="display:block; font-weight:600; margin-bottom:8px;">Seznam firem:</label>
+    <textarea name="names" rows="10" placeholder="Skoda Auto&#10;Bosch&#10;Tedom&#10;Faurecia&#10;..."
+              style="width:100%; padding:10px 14px; border:1.5px solid #d1d5db;
+                     border-radius:8px; font-size:0.9em; font-family:monospace;
+                     outline:none; resize:vertical;">{{ raw_input }}</textarea>
+    <div style="margin-top:12px; display:flex; gap:10px; align-items:center;">
+        <button type="submit" class="btn btn-primary">Najit firmy</button>
+        <span class="text-muted" style="font-size:0.82em;">
+            Oddelovac: nove radky, carky, strednikytaby. Bez ohledu na pravnickou formu a diakritiku.
+        </span>
+    </div>
+</form>
+
+{% if results is not none %}
+<div class="section-label">Vysledek ({{ results|length }} polozek)</div>
+
+<!-- Quick stats -->
+{% set ok_cnt = results|selectattr('status', 'equalto', 'ok')|list|length %}
+{% set alias_cnt = results|selectattr('status', 'equalto', 'alias')|list|length %}
+{% set fuzzy_cnt = results|selectattr('status', 'equalto', 'fuzzy')|list|length %}
+{% set missing_cnt = results|selectattr('status', 'equalto', 'missing')|list|length %}
+<div class="stats-row">
+    <div class="stat-card green">
+        <div class="number">{{ ok_cnt }}</div>
+        <div class="label">Presna shoda</div>
+    </div>
+    <div class="stat-card blue">
+        <div class="number">{{ alias_cnt + fuzzy_cnt }}</div>
+        <div class="label">Pravdepodobna shoda</div>
+    </div>
+    <div class="stat-card red">
+        <div class="number">{{ missing_cnt }}</div>
+        <div class="label">Nenalezeno</div>
+    </div>
+    <div class="stat-card purple">
+        <div class="number">
+            {{ results|selectattr('sent', 'equalto', true)|list|length }}
+        </div>
+        <div class="label">Jiz osloveno</div>
+    </div>
+</div>
+
+<!-- Results table -->
+<div class="card" style="padding:0; overflow-x:auto;">
+<table style="margin:0;">
+    <thead>
+        <tr>
+            <th>Stav</th>
+            <th>Tvuj vstup</th>
+            <th>Nalezeno v databazi</th>
+            <th style="text-align:right;">Pozic</th>
+            <th style="text-align:right;">Aktualizovanych</th>
+            <th>Kraje</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in results %}
+        <tr style="{% if r.status == 'missing' %}background:#fef2f2;{% elif r.status == 'fuzzy' %}background:#fefce8;{% elif r.sent %}background:#f0fdf4;{% endif %}">
+            <td>
+                {% if r.status == 'ok' %}
+                    <span class="status-badge" style="background:#dcfce7; color:#15803d;">&#10004; Shoda</span>
+                {% elif r.status == 'alias' %}
+                    <span class="status-badge" style="background:#dbeafe; color:#2563eb;">Alias</span>
+                {% elif r.status == 'fuzzy' %}
+                    <span class="status-badge" style="background:#fef3c7; color:#a16207;">~ Podobna</span>
+                {% else %}
+                    <span class="status-badge" style="background:#fee2e2; color:#dc2626;">X Nenalezeno</span>
+                {% endif %}
+                {% if r.sent %}
+                <br>
+                <span style="background:#dcfce7; color:#15803d; padding:1px 6px;
+                             border-radius:4px; font-size:0.7em; font-weight:700; margin-top:3px;
+                             display:inline-block;">
+                    &#10004; Osloveno {{ r.sent_datum }}
+                </span>
+                {% endif %}
+            </td>
+            <td style="font-family:monospace; font-size:0.85em; color:#64748b;">
+                {{ r.input }}
+            </td>
+            <td>
+                {% if r.firma %}
+                    <a class="firma-link" href="/firma/{{ r.firma_norm }}">
+                        <strong>{{ r.firma }}</strong>
+                    </a>
+                {% else %}
+                    <span class="text-muted">—</span>
+                {% endif %}
+            </td>
+            <td style="text-align:right;">
+                {% if r.pocet_pozic %}
+                <strong>{{ r.pocet_pozic }}</strong>
+                {% else %}
+                <span class="text-muted">—</span>
+                {% endif %}
+            </td>
+            <td style="text-align:right;">
+                {% if r.aktualizovanych %}
+                <span style="background:#fef2f2; color:#dc2626; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600;">
+                    {{ r.aktualizovanych }}
+                </span>
+                {% else %}
+                <span class="text-muted">—</span>
+                {% endif %}
+            </td>
+            <td style="font-size:0.78em; color:#64748b;">
+                {% if r.kraje %}{{ r.kraje|join(', ') }}{% endif %}
+            </td>
+            <td>
+                {% if r.firma %}
+                <a href="/firma/{{ r.firma_norm }}" class="btn btn-outline btn-sm">Detail</a>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+
+<div style="margin-top:16px; display:flex; gap:10px;">
+    <a href="/firmy/bulk" class="btn btn-outline btn-sm">Novy seznam</a>
+    <a href="/firmy" class="btn btn-outline btn-sm">Vsechny firmy</a>
+</div>
+{% else %}
+<div class="card" style="background:#f8fafc;">
+    <h3 style="margin-bottom:6px;">Jak to funguje</h3>
+    <ul style="color:#555; font-size:0.88em; line-height:1.7; margin-left:20px;">
+        <li><strong>Shoda</strong> &mdash; firma v databazi presne odpovida (ignoruje pravni formu a diakritiku).</li>
+        <li><strong>Alias</strong> &mdash; firma byla manualne nalinkovana na svuj kanonicky nazev.</li>
+        <li><strong>Podobna</strong> &mdash; nejlepsi fuzzy shoda nad 85 % &mdash; zkontroluj ze sedi.</li>
+        <li><strong>Nenalezeno</strong> &mdash; v aktivni databazi neni firma s timto nazvem (mozna jeste nesescrapovana, nebo to je agentura).</li>
+    </ul>
+    <p style="margin-top:10px; color:#888; font-size:0.85em;">
+        Tip: paste muzes mit jeden nazev na radek, nebo oddelene carkami. Jakekoli prazdne radky se ignoruji.
+    </p>
+</div>
+{% endif %}
+{% endblock %}

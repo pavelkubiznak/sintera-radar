@@ -6,6 +6,7 @@ import dataclasses
 import io
 import json
 import os
+import re
 import threading
 import uuid
 from datetime import datetime
@@ -20,7 +21,7 @@ from database import (init_db, uloz_nabidky, nacti_nabidky, statistiky, exportuj
                        nacti_outreach, nacti_outreach_map, outreach_statistiky, OUTREACH_STATUSES,
                        radar_doporuceni, detect_surge, generate_batch_messages,
                        normalize_company, firma_detail, dashboard_stats,
-                       filtr_pozice, firmy_prehled,
+                       filtr_pozice, firmy_prehled, firma_search, firma_bulk_lookup,
                        generate_missile_dms, salary_benchmark, analytics_export_data,
                        generate_dm_for_position)
 
@@ -219,6 +220,40 @@ def firmy_page():
     return render_template("firmy.html",
                            data=data, sort=sort, page=page, kraj=kraj,
                            kraje=KRAJE)
+
+
+@app.route("/firmy/bulk", methods=["GET", "POST"])
+def firmy_bulk_page():
+    """Paste a list of company names → find matches in our DB."""
+    results = None
+    raw_input = ""
+    if request.method == "POST":
+        raw_input = request.form.get("names", "")
+        # Split on newlines, commas, semicolons, tabs
+        names = [n.strip() for n in re.split(r"[\n,;\t]+", raw_input) if n.strip()]
+        if names:
+            results = firma_bulk_lookup(names)
+    return render_template("firmy_bulk.html",
+                           results=results, raw_input=raw_input,
+                           kraje=KRAJE)
+
+
+@app.route("/api/firma-search")
+def api_firma_search():
+    """Autocomplete-style firma lookup. Returns up to 10 matches."""
+    q = request.args.get("q", "")
+    limit = int(request.args.get("limit", 10))
+    return jsonify({"results": firma_search(q, limit=limit)})
+
+
+@app.route("/api/firma-bulk-lookup", methods=["POST"])
+def api_firma_bulk_lookup():
+    """Bulk lookup: POST with {names: [...]} → returns match for each."""
+    data = request.get_json(silent=True) or {}
+    names = data.get("names", [])
+    if isinstance(names, str):
+        names = [n.strip() for n in re.split(r"[\n,;\t]+", names) if n.strip()]
+    return jsonify({"results": firma_bulk_lookup(names)})
 
 
 @app.route("/scraper")

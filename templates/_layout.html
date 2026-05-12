@@ -17,6 +17,46 @@
         .sidebar-brand h1 { font-size: 1.15em; color: #fff; font-weight: 700; }
         .sidebar-brand .sub { font-size: 0.75em; color: #818cf8; margin-top: 2px; }
 
+        /* Sidebar search */
+        .sidebar-search { padding: 12px 12px 4px; position: relative; }
+        .sidebar-search input { width: 100%; background: #312e81; border: 1px solid #4338ca;
+                                color: #fff; padding: 7px 10px; border-radius: 6px;
+                                font-size: 0.85em; outline: none; }
+        .sidebar-search input::placeholder { color: #818cf8; }
+        .sidebar-search input:focus { border-color: #818cf8; background: #3730a3; }
+        .sidebar-search .sh-hint { position: absolute; right: 18px; top: 19px;
+                                    color: #6366f1; font-size: 0.7em;
+                                    pointer-events: none; background: #1e1b4b;
+                                    padding: 1px 5px; border-radius: 3px;
+                                    border: 1px solid #4338ca; }
+        .sidebar-search .sh-hint.hidden { display: none; }
+        .sh-results { background: #fff; border-radius: 8px; margin-top: 6px;
+                       box-shadow: 0 4px 20px rgba(0,0,0,0.25); overflow: hidden;
+                       display: none; max-height: 480px; overflow-y: auto; }
+        .sh-results.open { display: block; }
+        .sh-item { padding: 9px 12px; border-bottom: 1px solid #f0f0f0;
+                    cursor: pointer; transition: background 0.1s; }
+        .sh-item:hover, .sh-item.active { background: #eef2ff; }
+        .sh-item:last-child { border-bottom: none; }
+        .sh-item .firma { color: #1e1b4b; font-weight: 600; font-size: 0.85em;
+                           display: flex; align-items: center; gap: 6px; }
+        .sh-item .meta { font-size: 0.72em; color: #6b7280; margin-top: 2px;
+                          display: flex; gap: 8px; flex-wrap: wrap; }
+        .sh-item .m-pozic { color: #4338ca; font-weight: 600; }
+        .sh-item .m-akt { color: #dc2626; font-weight: 600; }
+        .sh-item .m-opak { color: #7c3aed; font-weight: 600; }
+        .sh-item .m-probl { color: #ea580c; font-weight: 600; }
+        .sh-item .sent-mark { background: #dcfce7; color: #15803d;
+                               padding: 0 5px; border-radius: 4px;
+                               font-size: 0.7em; font-weight: 700; }
+        .sh-empty { padding: 12px; color: #6b7280; font-size: 0.85em;
+                     text-align: center; }
+        .sh-bulk-link { display: block; padding: 8px 12px; background: #f8fafc;
+                         color: #4338ca; font-size: 0.78em; font-weight: 600;
+                         text-decoration: none; text-align: center;
+                         border-top: 1px solid #e5e7eb; }
+        .sh-bulk-link:hover { background: #eef2ff; }
+
         .sidebar-section { padding: 12px 0 4px; }
         .sidebar-section-label { font-size: 0.7em; text-transform: uppercase;
                                   letter-spacing: 1px; color: #6366f1; padding: 0 16px;
@@ -136,6 +176,13 @@
             <div class="sub">Radar & Akvizice</div>
         </div>
 
+        <div class="sidebar-search">
+            <input type="text" id="sh-input" placeholder="Najit firmu..."
+                   autocomplete="off" spellcheck="false">
+            <span class="sh-hint" id="sh-hint">/</span>
+            <div class="sh-results" id="sh-results"></div>
+        </div>
+
         <div class="sidebar-section">
             <a href="/" class="{% if active_page == 'dashboard' %}active{% endif %}">
                 <span class="icon">&#9673;</span> <span>Dashboard</span>
@@ -191,6 +238,128 @@
     <div class="main">
         {% block content %}{% endblock %}
     </div>
+
+    <script>
+    // ── Sidebar firma search (autocomplete) ──
+    (function() {
+        var input = document.getElementById('sh-input');
+        var hint = document.getElementById('sh-hint');
+        var box = document.getElementById('sh-results');
+        if (!input || !box) return;
+
+        var debounce = null;
+        var current = [];
+        var activeIdx = -1;
+
+        // Focus shortcut: "/" key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === '/' && document.activeElement.tagName !== 'INPUT'
+                && document.activeElement.tagName !== 'TEXTAREA') {
+                e.preventDefault();
+                input.focus();
+                input.select();
+            }
+            if (e.key === 'Escape') {
+                input.blur();
+                close();
+            }
+        });
+
+        input.addEventListener('focus', function() { hint.classList.add('hidden'); });
+        input.addEventListener('blur', function() {
+            if (!input.value) hint.classList.remove('hidden');
+            // Delay close so click on result can register
+            setTimeout(close, 200);
+        });
+
+        function close() { box.classList.remove('open'); activeIdx = -1; }
+
+        function render(items, query) {
+            current = items;
+            activeIdx = -1;
+            if (!items.length) {
+                box.innerHTML = '<div class="sh-empty">Zadne shody pro "'
+                    + escape(query) + '"</div>'
+                    + '<a href="/firmy/bulk" class="sh-bulk-link">Otevrit hromadne vyhledavani &rarr;</a>';
+                box.classList.add('open');
+                return;
+            }
+            var html = items.map(function(it, i) {
+                var meta = '<span class="m-pozic">' + it.pocet_pozic + ' pozic</span>';
+                if (it.aktualizovanych) meta += '<span class="m-akt">' + it.aktualizovanych + ' akt.</span>';
+                if (it.opakovanych) meta += '<span class="m-opak">' + it.opakovanych + ' opak.</span>';
+                if (it.problematickych) meta += '<span class="m-probl">' + it.problematickych + ' probl.</span>';
+                if (it.kraje && it.kraje.length) {
+                    var kr = it.kraje[0];
+                    if (it.kraje.length > 1) kr += ' +' + (it.kraje.length - 1);
+                    meta += '<span>' + escape(kr) + '</span>';
+                }
+                var sent = it.sent ? '<span class="sent-mark">&#10004;</span> ' : '';
+                return '<div class="sh-item" data-idx="' + i + '" data-norm="'
+                    + escape(it.firma_norm) + '">'
+                    + '<div class="firma">' + sent + escape(it.firma) + '</div>'
+                    + '<div class="meta">' + meta + '</div>'
+                    + '</div>';
+            }).join('');
+            html += '<a href="/firmy/bulk" class="sh-bulk-link">Hromadne vyhledavani (paste seznamu) &rarr;</a>';
+            box.innerHTML = html;
+            box.classList.add('open');
+            // Attach click handlers
+            box.querySelectorAll('.sh-item').forEach(function(el) {
+                el.addEventListener('mousedown', function(e) {
+                    e.preventDefault();
+                    window.location.href = '/firma/' + el.dataset.norm;
+                });
+                el.addEventListener('mouseenter', function() {
+                    setActive(parseInt(el.dataset.idx, 10));
+                });
+            });
+        }
+
+        function setActive(i) {
+            box.querySelectorAll('.sh-item').forEach(function(el, idx) {
+                if (idx === i) el.classList.add('active');
+                else el.classList.remove('active');
+            });
+            activeIdx = i;
+        }
+
+        function escape(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        input.addEventListener('input', function() {
+            var q = input.value.trim();
+            clearTimeout(debounce);
+            if (q.length < 2) { close(); return; }
+            debounce = setTimeout(function() {
+                fetch('/api/firma-search?q=' + encodeURIComponent(q) + '&limit=10')
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        render(data.results || [], q);
+                    })
+                    .catch(function() { close(); });
+            }, 220);
+        });
+
+        input.addEventListener('keydown', function(e) {
+            if (!box.classList.contains('open')) return;
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                setActive(Math.min(activeIdx + 1, current.length - 1));
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                setActive(Math.max(activeIdx - 1, 0));
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                var pick = activeIdx >= 0 ? current[activeIdx] : current[0];
+                if (pick) window.location.href = '/firma/' + encodeURIComponent(pick.firma_norm);
+            }
+        });
+    })();
+    </script>
 
     {% block scripts %}{% endblock %}
 </body>

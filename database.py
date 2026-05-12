@@ -1447,6 +1447,212 @@ def filtr_pozice(filtr: str = "", kraj: str = "", limit: int = 500,
 
 # ── Company overview (browsable list) ─────────────────────────────────────────
 
+def _strip_diacritics(s: str) -> str:
+    """Strip Czech diacritics for case-/accent-insensitive matching.
+    'Škoda Auto' → 'skoda auto', 'Plzeň' → 'plzen'.
+    """
+    import unicodedata
+    return ''.join(
+        c for c in unicodedata.normalize('NFD', s or '')
+        if unicodedata.category(c) != 'Mn'
+    ).lower()
+
+
+def firma_search(query: str, limit: int = 10) -> list:
+    """Autocomplete-style company search.
+
+    - Case- AND accent-insensitive substring match
+    - Returns top N companies with stats and 'sent' marker
+    - Ranking: exact match > prefix > substring > fuzzy
+    """
+    q = (query or "").strip()
+    if len(q) < 2:
+        return []
+
+    q_norm = normalize_company(q)
+    q_ascii = _strip_diacritics(q)
+
+    # Pull aggregates per active company (no agencies)
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT firma,
+                   COUNT(*) as pocet_pozic,
+                   SUM(CASE WHEN publikovano LIKE '%ktualizov%' THEN 1 ELSE 0 END) as aktualizovanych,
+                   SUM(CASE WHEN predchozi_job_id IS NOT NULL
+                            AND predchozi_job_id != '' THEN 1 ELSE 0 END) as opakovanych,
+                   SUM(CASE WHEN pocet_scanu >= 4 THEN 1 ELSE 0 END) as problematickych,
+                   GROUP_CONCAT(DISTINCT kraj) as kraje
+            FROM nabidky
+            WHERE aktivni = 1 AND firma != '' AND is_agency = 0
+            GROUP BY firma
+        """).fetchall()
+
+    # Python-side filter (diacritic-insensitive)
+    candidates = []
+    for r in rows:
+        firma = r["firma"]
+        fa = _strip_diacritics(firma)  # ascii-fold of full firma
+        fn = normalize_company(firma)
+        fn_ascii = _strip_diacritics(fn)
+
+        if q_ascii not in fa and q_ascii not in fn_ascii:
+            # Try fuzzy as last resort — but only if normalized form has
+            # a reasonable length, to avoid garbage matches like "d" ⊂ "skoda"
+            if len(fn) < max(4, len(q_norm) - 1):
+                continue
+            score = _match_score(q_norm, fn)
+            # Substring match in _match_score returns 0.92 — require the
+            # query be at least half the length of fn for that to count
+            if score >= 0.92 and len(q_norm) < len(fn) / 2:
+                continue
+            if score < 0.85:
+                continue
+        # Score: exact > prefix > substring > fuzzy
+        if fa == q_ascii or fn_ascii == q_ascii:
+            score = 1.0
+        elif fa.startswith(q_ascii) or fn_ascii.startswith(q_ascii):
+            score = 0.9
+        elif q_ascii in fa or q_ascii in fn_ascii:
+            score = 0.7
+        else:
+            score = _match_score(q_norm, fn)
+
+        candidates.append({
+            "firma": firma,
+            "firma_norm": fn,
+            "pocet_pozic": r["pocet_pozic"],
+            "aktualizovanych": r["aktualizovanych"] or 0,
+            "opakovanych": r["opakovanych"] or 0,
+            "problematickych": r["problematickych"] or 0,
+            "kraje": (r["kraje"] or "").split(",") if r["kraje"] else [],
+            "_score": score,
+        })
+
+    candidates.sort(key=lambda c: (-c["_score"], -c["pocet_pozic"]))
+    top = candidates[:limit]
+
+    # Enrich with outreach state
+    outreach_map = nacti_outreach_map()
+    for c in top:
+        c.pop("_score", None)
+        info = outreach_map.get(c["firma_norm"])
+        if info:
+            c["sent"] = True
+            c["sent_datum"] = info["datum"]
+            c["sent_kontakt"] = info["kontakt"]
+        else:
+            c["sent"] = False
+
+    return top
+
+
+def firma_bulk_lookup(names: list) -> list:
+    """For each input name, find the best matching company in our database.
+
+    Returns: [{input: 'Bosch', status: 'ok'|'fuzzy'|'missing',
+               firma: 'Robert Bosch s.r.o.', firma_norm: '...',
+               pocet_pozic: 12, aktualizovanych: 2, sent: bool, ...}]
+    """
+    if not names:
+        return []
+
+    # Load aliases for matching
+    aliases = _load_manual_aliases()
+
+    with get_conn() as conn:
+        all_firms = conn.execute("""
+            SELECT firma,
+                   COUNT(*) as pocet_pozic,
+                   SUM(CASE WHEN publikovano LIKE '%ktualizov%' THEN 1 ELSE 0 END) as aktualizovanych,
+                   SUM(CASE WHEN predchozi_job_id IS NOT NULL
+                            AND predchozi_job_id != '' THEN 1 ELSE 0 END) as opakovanych,
+                   GROUP_CONCAT(DISTINCT kraj) as kraje
+            FROM nabidky
+            WHERE aktivni = 1 AND firma != '' AND is_agency = 0
+            GROUP BY firma
+        """).fetchall()
+
+    # Build search indices
+    by_norm = {}
+    by_ascii = {}  # diacritic-stripped normalized name → row
+    for r in all_firms:
+        f = r["firma"]
+        n = normalize_company(f)
+        by_norm[n] = r
+        by_ascii[_strip_diacritics(n)] = r
+
+    outreach_map = nacti_outreach_map()
+    results = []
+    for raw_name in names:
+        name = (raw_name or "").strip()
+        if not name:
+            continue
+
+        norm = normalize_company(name)
+        ascii_norm = _strip_diacritics(norm)
+        match_row = None
+        status = "missing"
+
+        # 1. Exact normalized match
+        if norm in by_norm:
+            match_row = by_norm[norm]
+            status = "ok"
+        # 2. Diacritic-stripped exact match
+        elif ascii_norm in by_ascii:
+            match_row = by_ascii[ascii_norm]
+            status = "ok"
+        # 3. Alias
+        elif norm in aliases:
+            target = aliases[norm]
+            if target in by_norm:
+                match_row = by_norm[target]
+                status = "alias"
+        # 4. Substring / fuzzy (against both normalized and ascii forms)
+        else:
+            best = None
+            best_score = 0.0
+            for db_norm, row in by_norm.items():
+                score = _match_score(norm, db_norm)
+                if score > best_score:
+                    best_score = score
+                    best = row
+                # Also try ascii-stripped fuzzy
+                ascii_score = _match_score(ascii_norm, _strip_diacritics(db_norm))
+                if ascii_score > best_score:
+                    best_score = ascii_score
+                    best = row
+            if best_score >= 0.85:
+                match_row = best
+                status = "fuzzy"
+
+        if match_row is not None:
+            firma = match_row["firma"]
+            fn = normalize_company(firma)
+            sent_info = outreach_map.get(fn)
+            results.append({
+                "input": name,
+                "status": status,
+                "firma": firma,
+                "firma_norm": fn,
+                "pocet_pozic": match_row["pocet_pozic"],
+                "aktualizovanych": match_row["aktualizovanych"] or 0,
+                "opakovanych": match_row["opakovanych"] or 0,
+                "kraje": (match_row["kraje"] or "").split(",") if match_row["kraje"] else [],
+                "sent": bool(sent_info),
+                "sent_datum": sent_info["datum"] if sent_info else "",
+            })
+        else:
+            results.append({
+                "input": name,
+                "status": "missing",
+                "firma": "",
+                "firma_norm": "",
+                "pocet_pozic": 0,
+            })
+
+    return results
+
+
 def firmy_prehled(sort: str = "pozic", page: int = 1, per_page: int = 50,
                   kraj: str = "") -> dict:
     """Returns paginated company list with sorting.
