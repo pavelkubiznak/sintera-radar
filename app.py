@@ -261,6 +261,111 @@ def api_firma_bulk_lookup():
     return jsonify({"results": firma_bulk_lookup(names)})
 
 
+# ── HR Hunter / Enrichment routes ────────────────────────────────
+
+@app.route("/api/enrich-firma/<path:firma_norm>", methods=["POST"])
+def api_enrich_firma(firma_norm):
+    """Enrich a single firma — find website, scrape contacts, store result.
+    Returns the enrichment result + persisted contacts."""
+    from enrichment import enrich_firma, save_enrichment_result, get_contacts
+    data = request.get_json(silent=True) or {}
+    firma_name = data.get("firma", "") or firma_norm
+
+    try:
+        result = enrich_firma(firma_name, firma_norm)
+        saved = save_enrichment_result(result)
+        contacts = get_contacts(firma_norm)
+        return jsonify({
+            "ok": True,
+            "status": result.get("status"),
+            "website": result.get("website", ""),
+            "ico": result.get("ico", ""),
+            "sources_tried": result.get("sources_tried", []),
+            "errors": result.get("errors", []),
+            "duration_ms": result.get("duration_ms", 0),
+            "new_contacts": saved,
+            "total_contacts": len(contacts),
+            "contacts": contacts,
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({"ok": False, "error": str(e),
+                        "trace": traceback.format_exc()[-500:]}), 500
+
+
+@app.route("/api/firma-kontakty/<path:firma_norm>")
+def api_firma_kontakty(firma_norm):
+    """Return stored contacts + website + last-enrichment info."""
+    from enrichment import get_contacts, get_firma_web, get_last_enrichment
+    return jsonify({
+        "contacts": get_contacts(firma_norm),
+        "web": get_firma_web(firma_norm),
+        "last_enrichment": get_last_enrichment(firma_norm),
+    })
+
+
+@app.route("/api/enrich-bulk", methods=["POST"])
+def api_enrich_bulk():
+    """Start a background bulk enrichment job.
+    Body: {firmas: [{firma, firma_norm}, ...]} OR {firma_norms: [...]}
+    Returns: {job_id}"""
+    from enrichment import bulk_enrich_start
+    from database import normalize_company, get_conn
+    data = request.get_json(silent=True) or {}
+    firmas_in = data.get("firmas") or []
+    norms_only = data.get("firma_norms") or []
+
+    # If only norms provided, look up original firma names
+    if norms_only and not firmas_in:
+        with get_conn() as conn:
+            placeholders = ",".join(["?"] * len(norms_only))
+            rows = conn.execute(
+                "SELECT DISTINCT firma FROM nabidky "
+                "WHERE aktivni = 1 AND firma != ''",
+            ).fetchall()
+        # Build norm → firma map (use any firma name that normalizes to the norm)
+        firmas_in = []
+        seen_norms = set()
+        for r in rows:
+            f = r["firma"]
+            n = normalize_company(f)
+            if n in norms_only and n not in seen_norms:
+                firmas_in.append({"firma": f, "firma_norm": n})
+                seen_norms.add(n)
+
+    # Normalize input
+    pairs = []
+    for f in firmas_in:
+        if isinstance(f, dict):
+            firma = f.get("firma", "").strip()
+            norm = f.get("firma_norm", "").strip() or normalize_company(firma)
+        else:
+            firma = str(f).strip()
+            norm = normalize_company(firma)
+        if firma and norm:
+            pairs.append((firma, norm))
+
+    if not pairs:
+        return jsonify({"ok": False, "error": "no firmas to enrich"}), 400
+
+    # Limit to 50 per job for safety
+    if len(pairs) > 50:
+        pairs = pairs[:50]
+
+    job_id = bulk_enrich_start(pairs)
+    return jsonify({"ok": True, "job_id": job_id, "total": len(pairs)})
+
+
+@app.route("/api/enrich-status/<job_id>")
+def api_enrich_status(job_id):
+    """Poll bulk enrichment job status."""
+    from enrichment import bulk_enrich_status
+    job = bulk_enrich_status(job_id)
+    if not job:
+        return jsonify({"ok": False, "error": "job not found"}), 404
+    return jsonify({"ok": True, **job})
+
+
 @app.route("/scraper")
 def scraper_page():
     stats = statistiky()

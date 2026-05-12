@@ -278,6 +278,50 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_scrape_log_datum ON scrape_log(datum);
 
+            -- HR Hunter: cached company website (ARES + guess + manual)
+            CREATE TABLE IF NOT EXISTS firma_web (
+                firma_norm      TEXT PRIMARY KEY,
+                firma           TEXT NOT NULL,
+                ico             TEXT,
+                url             TEXT,
+                zdroj           TEXT,
+                datum_zjisteni  TEXT NOT NULL,
+                posledni_scan   TEXT,
+                blokovano       INTEGER DEFAULT 0,
+                poznamka        TEXT
+            );
+
+            -- HR Hunter: extracted contacts per company
+            CREATE TABLE IF NOT EXISTS firma_kontakty (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                firma_norm      TEXT NOT NULL,
+                firma           TEXT NOT NULL,
+                typ             TEXT NOT NULL,
+                jmeno           TEXT,
+                pozice          TEXT,
+                email           TEXT,
+                telefon         TEXT,
+                zdroj           TEXT,
+                confidence      REAL DEFAULT 0.5,
+                poznamka        TEXT,
+                datum_zjisteni  TEXT NOT NULL,
+                overeno         INTEGER DEFAULT 0,
+                aktivni         INTEGER DEFAULT 1
+            );
+
+            -- HR Hunter: log of enrichment runs
+            CREATE TABLE IF NOT EXISTS enrich_log (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                firma_norm          TEXT NOT NULL,
+                firma               TEXT NOT NULL,
+                datum               TEXT NOT NULL,
+                zdroje_zkusene      TEXT,
+                kontakty_nalezeno   INTEGER DEFAULT 0,
+                status              TEXT,
+                chyba               TEXT,
+                trvani_ms           INTEGER
+            );
+
             CREATE INDEX IF NOT EXISTS idx_dm_company ON decision_makers(company_normalized);
             CREATE INDEX IF NOT EXISTS idx_dm_kraj    ON decision_makers(kraj);
             CREATE INDEX IF NOT EXISTS idx_dm_profile ON decision_makers(profile_url);
@@ -285,6 +329,10 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_alias_li   ON company_aliases(firma_linkedin);
             CREATE INDEX IF NOT EXISTS idx_outreach_firma ON outreach(firma_norm);
             CREATE INDEX IF NOT EXISTS idx_outreach_status ON outreach(status);
+            CREATE INDEX IF NOT EXISTS idx_kontakty_firma ON firma_kontakty(firma_norm);
+            CREATE INDEX IF NOT EXISTS idx_kontakty_typ ON firma_kontakty(typ);
+            CREATE INDEX IF NOT EXISTS idx_enrich_firma ON enrich_log(firma_norm);
+            CREATE INDEX IF NOT EXISTS idx_enrich_datum ON enrich_log(datum);
         """)
 
         # Migrace: přidej nové sloupce do existující DB pokud chybí
@@ -1439,8 +1487,26 @@ def filtr_pozice(filtr: str = "", kraj: str = "", limit: int = 500,
                                     dm_norms_found.add(n)
                                     break
 
+                # Also include companies with scraped named contacts (HR Hunter)
+                scraped_norms = set()
+                try:
+                    rows = conn.execute(
+                        "SELECT DISTINCT firma_norm FROM firma_kontakty "
+                        "WHERE aktivni = 1 "
+                        "  AND LENGTH(COALESCE(jmeno,'')) >= 5 "
+                        "  AND LENGTH(COALESCE(email,'')) >= 5 "
+                        "  AND zdroj NOT LIKE '%pattern_guess%'"
+                    ).fetchall()
+                    scraped_norms = {r["firma_norm"] for r in rows}
+                except Exception:
+                    pass
+
                 for p in positions:
-                    p["has_dm"] = normalize_company(p["firma"]) in dm_norms_found
+                    fn = normalize_company(p["firma"])
+                    has_li = fn in dm_norms_found
+                    has_scraped = fn in scraped_norms
+                    p["has_dm"] = has_li or has_scraped
+                    p["dm_source"] = "linkedin" if has_li else ("scraped" if has_scraped else "")
 
     return positions
 
@@ -3571,10 +3637,16 @@ def generate_dm_for_position(firma: str, pozice_title: str = "",
                     dm_rows = [dm]
                     break
 
+    # Fallback to firma_kontakty (HR Hunter scraped contacts) if no LinkedIn DM
+    contact_source = "linkedin"
     if not dm_rows:
-        return None
-
-    dm_contact = dict(dm_rows[0])
+        scraped = _best_named_kontakt(firma_norm)
+        if not scraped:
+            return None
+        dm_contact = scraped
+        contact_source = "scraped"
+    else:
+        dm_contact = dict(dm_rows[0])
 
     # Validate contact
     last = dm_contact.get("last_name", "").strip()
@@ -3608,6 +3680,8 @@ def generate_dm_for_position(firma: str, pozice_title: str = "",
         "kontakt": dm_contact.get("full_name", ""),
         "kontakt_title": dm_contact.get("current_title", ""),
         "linkedin_url": dm_contact.get("profile_url", ""),
+        "email": dm_contact.get("email", ""),
+        "telefon": dm_contact.get("phone", ""),
         "firma": firma,
         "firma_norm": firma_norm,
         "pozice": pozice_title,
@@ -3615,6 +3689,50 @@ def generate_dm_for_position(firma: str, pozice_title: str = "",
         "zprava": msg,
         "char_count": len(msg),
         "combo_source": "vacancy" if (vacancy_text and combo) else "title",
+        "contact_source": contact_source,
+    }
+
+
+def _best_named_kontakt(firma_norm: str) -> Optional[dict]:
+    """Return best-named HR contact from firma_kontakty as a synthesized
+    decision_makers-like dict. Used as fallback when LinkedIn DM is missing.
+
+    Picks the highest-confidence named contact with both jmeno and email.
+    Returns None if no usable named contact exists.
+    """
+    if not firma_norm:
+        return None
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT * FROM firma_kontakty
+            WHERE firma_norm = ? AND aktivni = 1
+              AND LENGTH(COALESCE(jmeno, '')) >= 5
+              AND LENGTH(COALESCE(email, '')) >= 5
+              AND zdroj NOT LIKE '%pattern_guess%'
+            ORDER BY confidence DESC, id ASC LIMIT 1
+        """, (firma_norm,)).fetchall()
+    if not rows:
+        return None
+    r = dict(rows[0])
+    jmeno = (r.get("jmeno") or "").strip()
+    parts = jmeno.split()
+    if len(parts) < 2:
+        return None
+    first = parts[0]
+    last = parts[-1]
+    # Synthesize a decision_maker-shaped dict
+    return {
+        "first_name": first,
+        "last_name": last,
+        "full_name": jmeno,
+        "current_title": r.get("pozice", "") or "HR",
+        "current_company": "",
+        "headline": r.get("pozice", "") or "",
+        "profile_url": "",
+        "email": r.get("email", "") or "",
+        "phone": r.get("telefon", "") or "",
+        "company_normalized": firma_norm,
+        "gender": "",  # _detect_gender will infer from last_name
     }
 
 

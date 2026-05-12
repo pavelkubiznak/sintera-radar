@@ -255,8 +255,24 @@
         {% endif %}
     </div>
 
-    <!-- RIGHT: Decision makers + Outreach -->
+    <!-- RIGHT: Decision makers + HR Hunter + Outreach -->
     <div>
+        <!-- HR Hunter: scraped contacts -->
+        <div class="card" id="hr-hunter-card">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px;">
+                <h2 style="margin:0;">HR Hunter</h2>
+                <button class="btn btn-outline btn-sm" id="hr-enrich-btn"
+                        onclick="enrichFirma('{{ detail.firma|e }}', '{{ detail.firma_norm }}')">
+                    Obohatit kontakty
+                </button>
+            </div>
+            <div id="hr-hunter-content" data-firma-norm="{{ detail.firma_norm }}" data-firma="{{ detail.firma|e }}">
+                <div class="text-muted" style="font-size:0.85em;">
+                    Klikni na "Obohatit kontakty" pro automatické vyhledání HR emailů, telefonů a jmenovaných kontaktů z webu firmy.
+                </div>
+            </div>
+        </div>
+
         <!-- Decision makers -->
         <div class="card">
             <h2>Decision Makers ({{ detail.decision_makers|length }})</h2>
@@ -344,5 +360,175 @@ function markContacted(firmaNorm, firma, kontakt, kontaktUrl, kraj) {
         if (data.ok) location.reload();
     });
 }
+
+// ── HR Hunter ───────────────────────────────────────────────────
+function esc(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function typeLabel(typ) {
+    var labels = {
+        'hr_named': {label: 'HR osoba', color: '#15803d', bg: '#dcfce7'},
+        'named_person': {label: 'Osobní', color: '#15803d', bg: '#dcfce7'},
+        'hr_email': {label: 'HR email', color: '#4338ca', bg: '#eef2ff'},
+        'hr_generic': {label: 'HR email', color: '#4338ca', bg: '#eef2ff'},
+        'hr_phone': {label: 'HR telefon', color: '#4338ca', bg: '#eef2ff'},
+        'person_email': {label: 'Os. email', color: '#0e7490', bg: '#cffafe'},
+        'general_email': {label: 'Obecné', color: '#64748b', bg: '#f1f5f9'},
+        'phone': {label: 'Telefon', color: '#64748b', bg: '#f1f5f9'},
+        'helpline': {label: 'Helpline', color: '#dc2626', bg: '#fef2f2'},
+        'general': {label: 'Obecné', color: '#64748b', bg: '#f1f5f9'},
+    };
+    return labels[typ] || {label: typ, color: '#64748b', bg: '#f1f5f9'};
+}
+
+function renderContacts(data) {
+    var c = document.getElementById('hr-hunter-content');
+    var contacts = data.contacts || [];
+    var web = data.web || (data.website ? {url: data.website, ico: data.ico} : null);
+    var lastEnrich = data.last_enrichment || null;
+
+    var html = '';
+    if (web && web.url) {
+        html += '<div style="font-size:0.82em; color:#666; margin-bottom:8px;">';
+        html += '<strong>Web:</strong> <a href="' + esc(web.url) + '" target="_blank" style="color:#6366f1;">' + esc(web.url) + '</a>';
+        if (web.ico) html += ' &middot; <strong>IČO:</strong> ' + esc(web.ico);
+        html += '</div>';
+    }
+    if (lastEnrich) {
+        var st = lastEnrich.status || '';
+        var stColor = st === 'success' ? '#15803d' : (st === 'partial' ? '#a16207' : '#dc2626');
+        html += '<div style="font-size:0.78em; color:#666; margin-bottom:8px;">';
+        html += 'Posledni scan: ' + esc((lastEnrich.datum || '').slice(0, 16))
+            + ' &middot; <span style="color:' + stColor + '; font-weight:600;">' + esc(st) + '</span>';
+        if (lastEnrich.kontakty_nalezeno) html += ' &middot; ' + lastEnrich.kontakty_nalezeno + ' kontaktů';
+        html += '</div>';
+    }
+
+    if (!contacts.length) {
+        html += '<div class="text-muted" style="font-size:0.85em;">Žádné kontakty zatím nenalezeny. Klikni na "Obohatit kontakty".</div>';
+        c.innerHTML = html;
+        return;
+    }
+
+    // Group: HR/named, generic emails, phones, guessed
+    var hr = contacts.filter(function(x) {
+        return (x.typ === 'hr_named' || x.typ === 'named_person' || x.typ === 'hr_email'
+                || x.typ === 'hr_generic' || x.typ === 'hr_phone' || x.typ === 'person_email')
+                && (x.zdroj || '').indexOf('pattern_guess') < 0;
+    });
+    var guessed = contacts.filter(function(x) { return (x.zdroj || '').indexOf('pattern_guess') >= 0; });
+    var others = contacts.filter(function(x) {
+        return hr.indexOf(x) < 0 && guessed.indexOf(x) < 0;
+    });
+
+    function renderRow(c) {
+        var tl = typeLabel(c.typ);
+        var s = '<div style="padding:8px 10px; border-bottom:1px solid #f0f0f0;">';
+        s += '<div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">';
+        s += '<span style="background:' + tl.bg + '; color:' + tl.color
+             + '; padding:1px 7px; border-radius:5px; font-size:0.7em; font-weight:700;">' + tl.label + '</span>';
+        if (c.confidence != null) {
+            s += '<span style="font-size:0.7em; color:#888;">conf ' + Number(c.confidence).toFixed(2) + '</span>';
+        }
+        if (c.jmeno) s += '<strong style="font-size:0.9em;">' + esc(c.jmeno) + '</strong>';
+        if (c.pozice) s += '<span style="color:#666; font-size:0.85em;">(' + esc(c.pozice) + ')</span>';
+        s += '</div>';
+        s += '<div style="font-size:0.85em; margin-top:3px; color:#333;">';
+        if (c.email) {
+            s += '<a href="mailto:' + esc(c.email) + '" style="color:#6366f1;">' + esc(c.email) + '</a>';
+        }
+        if (c.telefon) {
+            if (c.email) s += ' &middot; ';
+            s += '<a href="tel:' + esc(c.telefon) + '" style="color:#6366f1;">' + esc(c.telefon) + '</a>';
+        }
+        s += '</div>';
+        if (c.zdroj) {
+            s += '<div style="font-size:0.7em; color:#888; margin-top:2px;">'
+                + (c.zdroj.indexOf('http') === 0
+                    ? '<a href="' + esc(c.zdroj) + '" target="_blank" style="color:#888;">' + esc(c.zdroj.slice(0, 60)) + '</a>'
+                    : esc(c.zdroj));
+            if (c.poznamka) s += ' &middot; ' + esc(c.poznamka);
+            s += '</div>';
+        }
+        s += '</div>';
+        return s;
+    }
+
+    if (hr.length) {
+        html += '<div style="margin-bottom:8px; font-size:0.78em; font-weight:700; color:#15803d; text-transform:uppercase; letter-spacing:0.5px;">'
+              + 'Naleznené (' + hr.length + ')</div>';
+        for (var i = 0; i < hr.length; i++) html += renderRow(hr[i]);
+    }
+    if (others.length) {
+        html += '<div style="margin-top:10px; margin-bottom:8px; font-size:0.78em; font-weight:700; color:#666; text-transform:uppercase; letter-spacing:0.5px;">'
+              + 'Ostatní (' + others.length + ')</div>';
+        for (var i = 0; i < others.length; i++) html += renderRow(others[i]);
+    }
+    if (guessed.length) {
+        html += '<details style="margin-top:10px;"><summary style="cursor:pointer; font-size:0.78em; font-weight:700; color:#a16207; text-transform:uppercase; letter-spacing:0.5px;">'
+              + 'Hádané vzory (' + guessed.length + ') &mdash; klikni pro zobrazení</summary>';
+        for (var i = 0; i < guessed.length; i++) html += renderRow(guessed[i]);
+        html += '</details>';
+    }
+
+    c.innerHTML = html;
+}
+
+function loadStoredContacts(firmaNorm) {
+    fetch('/api/firma-kontakty/' + encodeURIComponent(firmaNorm))
+        .then(function(r) { return r.json(); })
+        .then(function(data) { renderContacts(data); })
+        .catch(function() {});
+}
+
+function enrichFirma(firma, firmaNorm) {
+    var btn = document.getElementById('hr-enrich-btn');
+    var c = document.getElementById('hr-hunter-content');
+    btn.disabled = true;
+    btn.textContent = 'Hledám...';
+    c.innerHTML = '<div style="font-size:0.85em; color:#6366f1; padding:8px 0;">Spouštím rešerši — ARES, firemní web, scraping kontaktních stránek, pattern guessing... (10-30s)</div>';
+
+    fetch('/api/enrich-firma/' + encodeURIComponent(firmaNorm), {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({firma: firma}),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        btn.disabled = false;
+        btn.textContent = 'Obnovit kontakty';
+        if (!data.ok) {
+            c.innerHTML = '<div style="color:#dc2626; font-size:0.85em;">Chyba: ' + esc(data.error || 'neznámá') + '</div>';
+            return;
+        }
+        renderContacts({
+            contacts: data.contacts,
+            website: data.website,
+            ico: data.ico,
+            web: {url: data.website, ico: data.ico},
+            last_enrichment: {
+                datum: new Date().toISOString().slice(0, 19),
+                status: data.status,
+                kontakty_nalezeno: data.new_contacts,
+            },
+        });
+    })
+    .catch(function(err) {
+        btn.disabled = false;
+        btn.textContent = 'Obohatit kontakty';
+        c.innerHTML = '<div style="color:#dc2626; font-size:0.85em;">Síťová chyba: ' + esc(err.message) + '</div>';
+    });
+}
+
+// Auto-load stored contacts on page load
+(function() {
+    var el = document.getElementById('hr-hunter-content');
+    if (el && el.dataset.firmaNorm) {
+        loadStoredContacts(el.dataset.firmaNorm);
+    }
+})();
 </script>
 {% endblock %}

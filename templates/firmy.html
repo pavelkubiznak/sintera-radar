@@ -23,10 +23,33 @@
         </div>
         <a href="/firmy/bulk" class="btn btn-outline btn-sm"
            style="white-space:nowrap;">Hromadny lookup (paste seznamu)</a>
+        <button class="btn btn-primary btn-sm" id="bulk-enrich-btn"
+                onclick="startBulkEnrich()" style="white-space:nowrap;"
+                title="Spustí HR Hunter pro označené firmy (max 50)">
+            HR Hunter — obohatit označené
+        </button>
     </div>
     <div style="margin-top:8px; font-size:0.8em; color:#888;">
         Tip: ve vrchnim sidebaru je vyhledavani vzdy po ruce. Stiskni <kbd style="background:#f1f5f9; border:1px solid #d1d5db; border-radius:3px; padding:1px 5px; font-family:monospace;">/</kbd> kdekoli.
     </div>
+</div>
+
+<!-- Bulk enrich progress overlay (hidden by default) -->
+<div id="bulk-enrich-overlay" style="display:none; position:fixed; top:20px; right:20px;
+                                       background:#fff; border:1px solid #6366f1;
+                                       border-radius:10px; padding:16px 20px;
+                                       box-shadow:0 4px 20px rgba(0,0,0,0.15);
+                                       z-index:200; min-width:300px; max-width:400px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <strong style="color:#4338ca;">HR Hunter — Bulk enrich</strong>
+        <button onclick="document.getElementById('bulk-enrich-overlay').style.display='none'"
+                style="background:none; border:none; cursor:pointer; font-size:1.3em; color:#888; line-height:1;">&times;</button>
+    </div>
+    <div id="bulk-enrich-progress" style="font-size:0.85em; color:#555;">Spouštím...</div>
+    <div style="margin-top:10px; height:6px; background:#eef2ff; border-radius:3px; overflow:hidden;">
+        <div id="bulk-enrich-bar" style="height:100%; width:0%; background:#6366f1; transition:width 0.3s;"></div>
+    </div>
+    <div id="bulk-enrich-summary" style="margin-top:8px; font-size:0.8em; color:#888;"></div>
 </div>
 
 <!-- Sort tabs -->
@@ -94,6 +117,7 @@ function updateFilter(name, value) {
 <table style="margin:0;">
     <thead>
         <tr>
+            <th style="width:24px;"><input type="checkbox" id="select-all-cb" onclick="toggleSelectAll(this)"></th>
             <th>#</th>
             <th>Firma</th>
             <th>Kraje</th>
@@ -107,6 +131,7 @@ function updateFilter(name, value) {
     <tbody>
         {% for f in data.firmy %}
         <tr>
+            <td><input type="checkbox" class="enrich-cb" data-firma="{{ f.firma|e }}" data-norm="{{ f.firma_norm }}"></td>
             <td class="text-muted">{{ (data.page - 1) * 50 + loop.index }}</td>
             <td>
                 <a class="firma-link" href="/firma/{{ f.firma_norm }}">
@@ -160,7 +185,7 @@ function updateFilter(name, value) {
         {% endfor %}
         {% if not data.firmy %}
         <tr>
-            <td colspan="8" style="text-align:center; padding:30px; color:#94a3b8;">
+            <td colspan="9" style="text-align:center; padding:30px; color:#94a3b8;">
                 Zadne firmy.
             </td>
         </tr>
@@ -300,5 +325,91 @@ function updateFilter(name, value) {
         }
     });
 })();
+
+// ── Bulk enrichment ────────────────────────────────────────────
+function toggleSelectAll(cb) {
+    document.querySelectorAll('.enrich-cb').forEach(function(x) { x.checked = cb.checked; });
+}
+
+function startBulkEnrich() {
+    var checked = document.querySelectorAll('.enrich-cb:checked');
+    if (checked.length === 0) {
+        alert('Označ alespoň jednu firmu (zaškrtni checkbox).');
+        return;
+    }
+    if (checked.length > 50) {
+        if (!confirm('Označeno ' + checked.length + ' firem. Limit je 50 najednou — pokračovat jen s prvními 50?')) return;
+    }
+    var pairs = [];
+    for (var i = 0; i < checked.length && i < 50; i++) {
+        var cb = checked[i];
+        pairs.push({firma: cb.dataset.firma, firma_norm: cb.dataset.norm});
+    }
+
+    var overlay = document.getElementById('bulk-enrich-overlay');
+    var progressEl = document.getElementById('bulk-enrich-progress');
+    var barEl = document.getElementById('bulk-enrich-bar');
+    var summaryEl = document.getElementById('bulk-enrich-summary');
+    overlay.style.display = 'block';
+    progressEl.textContent = 'Spouštím rešerši pro ' + pairs.length + ' firem...';
+    barEl.style.width = '0%';
+    summaryEl.textContent = '';
+
+    fetch('/api/enrich-bulk', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({firmas: pairs}),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (!data.ok) {
+            progressEl.textContent = 'Chyba: ' + (data.error || 'neznámá');
+            progressEl.style.color = '#dc2626';
+            return;
+        }
+        pollEnrichStatus(data.job_id);
+    })
+    .catch(function(err) {
+        progressEl.textContent = 'Chyba: ' + err.message;
+        progressEl.style.color = '#dc2626';
+    });
+}
+
+function pollEnrichStatus(jobId) {
+    var progressEl = document.getElementById('bulk-enrich-progress');
+    var barEl = document.getElementById('bulk-enrich-bar');
+    var summaryEl = document.getElementById('bulk-enrich-summary');
+
+    function tick() {
+        fetch('/api/enrich-status/' + encodeURIComponent(jobId))
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (!d.ok) {
+                    progressEl.textContent = 'Chyba: ' + (d.error || 'job not found');
+                    return;
+                }
+                var pct = d.total ? Math.round(100 * d.progress / d.total) : 0;
+                barEl.style.width = pct + '%';
+                if (d.status === 'done') {
+                    progressEl.textContent = 'Hotovo — ' + d.progress + '/' + d.total;
+                    var ok = 0, partial = 0, failed = 0, contacts = 0;
+                    for (var i = 0; i < d.results.length; i++) {
+                        var rs = d.results[i].status;
+                        if (rs === 'success') ok++;
+                        else if (rs === 'partial') partial++;
+                        else failed++;
+                        contacts += (d.results[i].contacts || 0);
+                    }
+                    summaryEl.innerHTML = '<strong>'+ok+'</strong> success · '+partial+' partial · '+failed+' failed · <strong>'+contacts+'</strong> kontaktů celkem'
+                        + '<div style="margin-top:6px; font-size:0.85em;">Obnov stránku detailu firmy pro zobrazení.</div>';
+                    return;
+                }
+                progressEl.textContent = 'Hledám: ' + (d.current || '...') + ' (' + d.progress + '/' + d.total + ')';
+                setTimeout(tick, 1500);
+            })
+            .catch(function() { setTimeout(tick, 3000); });
+    }
+    tick();
+}
 </script>
 {% endblock %}

@@ -313,17 +313,24 @@ function toggleDM(idx, firma, pozice, kraj, url) {
         }
         dmCache[idx] = data.dm;
         var d = data.dm;
+        var src = d.contact_source || 'linkedin';
+        var srcBadge = src === 'scraped'
+            ? '<span style="background:#fef3c7; color:#a16207; padding:1px 6px; border-radius:4px; font-size:0.7em; font-weight:700; margin-left:6px;" title="Kontakt nalezen přes HR Hunter (web firmy)">HR Hunter</span>'
+            : '<span style="background:#dbeafe; color:#2563eb; padding:1px 6px; border-radius:4px; font-size:0.7em; font-weight:700; margin-left:6px;" title="Kontakt z LinkedIn DB">LinkedIn</span>';
         var html = '<div class="dm-panel-inner">' +
             '<div class="dm-panel-contact">' +
-                '<div class="name">' + d.kontakt + '</div>' +
+                '<div class="name">' + d.kontakt + srcBadge + '</div>' +
                 (d.kontakt_title ? '<div class="title">' + d.kontakt_title + '</div>' : '') +
                 (d.linkedin_url ? '<div class="linkedin"><a href="' + d.linkedin_url + '" target="_blank">Otevrit LinkedIn &rarr;</a></div>' : '') +
+                (d.email ? '<div class="linkedin"><a href="mailto:' + d.email + '">' + d.email + '</a></div>' : '') +
+                (d.telefon ? '<div class="linkedin"><a href="tel:' + d.telefon + '">' + d.telefon + '</a></div>' : '') +
             '</div>' +
             '<div class="dm-panel-msg">' +
                 '<textarea id="dm-text-' + idx + '" rows="5">' + d.zprava + '</textarea>' +
                 '<div class="dm-panel-actions">' +
                     '<button class="btn btn-primary btn-sm" onclick="copyDM(' + idx + ')">Zkopirovat</button>' +
                     (d.linkedin_url ? '<a href="' + d.linkedin_url + '" target="_blank" class="btn btn-outline btn-sm">LinkedIn</a>' : '') +
+                    (d.email ? '<a href="mailto:' + d.email + '" class="btn btn-outline btn-sm">Email</a>' : '') +
                     '<button class="btn btn-green btn-sm" onclick="markSent(' + idx + ')">Odeslano</button>' +
                     '<span class="copy-ok-inline" id="copy-ok-' + idx + '">Zkopirovano!</span>' +
                     '<span class="dm-panel-chars">' + d.char_count + ' znaku</span>' +
