@@ -51,29 +51,45 @@
 {% set sent_count = rows|selectattr('sent', 'equalto', true)|list|length %}
 {% set actionable_count = rows|rejectattr('sent', 'equalto', true)|selectattr('has_dm', 'equalto', true)|list|length %}
 {% set no_dm_count = rows|rejectattr('sent', 'equalto', true)|rejectattr('has_dm', 'equalto', true)|list|length %}
+{% macro status_link(s, label) -%}
+  /pozice?{% if filtr %}filtr={{ filtr }}&{% endif %}{% if kraj %}kraj={{ kraj }}&{% endif %}{% if sort %}sort={{ sort }}&{% endif %}status={{ s }}
+{%- endmacro %}
 <div class="main-header">
     <h1>{{ titulek }}</h1>
     {% if popisek %}
     <div class="subtitle">{{ popisek }}</div>
     {% endif %}
-    {% if total_count > 0 %}
-    <div style="display:flex; gap:14px; margin-top:8px; flex-wrap:wrap; font-size:0.85em;">
-        <span title="Pozice s nalezeným kontaktem (LinkedIn nebo HR Hunter), zatím neosloveno">
-            <span style="display:inline-block; width:9px; height:9px; background:#22c55e; border-radius:50%; margin-right:4px; vertical-align:middle;"></span>
-            <strong>{{ actionable_count }}</strong> připraveno oslovit
+    <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; font-size:0.85em; align-items:center;">
+        <a href="/pozice?{% if filtr %}filtr={{ filtr }}{% endif %}{% if kraj %}&kraj={{ kraj }}{% endif %}{% if sort %}&sort={{ sort }}{% endif %}"
+           style="padding:4px 12px; border-radius:14px; text-decoration:none;
+                  {% if not status %}background:#1e1b4b; color:#fff; font-weight:600;{% else %}background:#f3f4f6; color:#555;{% endif %}">
+            Vše
+        </a>
+        <a href="{{ status_link('ready') }}"
+           title="Pozice s kontaktem (LinkedIn nebo HR Hunter), neosloveno"
+           style="padding:4px 12px; border-radius:14px; text-decoration:none;
+                  {% if status == 'ready' %}background:#15803d; color:#fff; font-weight:600;{% else %}background:#dcfce7; color:#15803d;{% endif %}">
+            &#9673; Připraveno oslovit
+            {% if not status %}<strong>({{ actionable_count }})</strong>{% endif %}
+        </a>
+        <a href="{{ status_link('sent') }}"
+           title="Pozice z firem, které již máš osloveno"
+           style="padding:4px 12px; border-radius:14px; text-decoration:none;
+                  {% if status == 'sent' %}background:#16a34a; color:#fff; font-weight:600;{% else %}background:#f0fdf4; color:#15803d;{% endif %}">
+            &#10004; Osloveno
+            {% if not status %}<strong>({{ sent_count }})</strong>{% endif %}
+        </a>
+        <a href="{{ status_link('nodm') }}"
+           title="Pozice bez kontaktu — vyžaduje HR Hunter nebo manuální research"
+           style="padding:4px 12px; border-radius:14px; text-decoration:none;
+                  {% if status == 'nodm' %}background:#64748b; color:#fff; font-weight:600;{% else %}background:#f3f4f6; color:#555;{% endif %}">
+            &#9711; Bez kontaktu
+            {% if not status %}<strong>({{ no_dm_count }})</strong>{% endif %}
+        </a>
+        <span style="color:#888; margin-left:6px;">
+            zobrazeno {{ total_count }} pozic
         </span>
-        <span title="Pozice z firem, které jste již kontaktovali">
-            <span style="display:inline-block; width:9px; height:9px; background:#16a34a; margin-right:4px; vertical-align:middle;">&#10004;</span>
-            <strong>{{ sent_count }}</strong> osloveno
-        </span>
-        <span title="Pozice bez kontaktu — vyžaduje HR Hunter nebo manuální research">
-            <span style="display:inline-block; width:9px; height:9px; background:#d1d5db; border-radius:50%; margin-right:4px; vertical-align:middle;"></span>
-            <strong>{{ no_dm_count }}</strong> bez kontaktu
-        </span>
-        <span style="color:#888;">|</span>
-        <span style="color:#888;">celkem {{ total_count }} pozic</span>
     </div>
-    {% endif %}
 </div>
 
 <!-- Filter tabs -->

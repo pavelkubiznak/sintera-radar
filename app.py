@@ -169,6 +169,7 @@ def pozice_page():
     filtr = request.args.get("filtr", "")
     kraj = request.args.get("kraj", "")
     sort = request.args.get("sort", "")
+    status = request.args.get("status", "")  # 'ready' | 'sent' | 'nodm' | ''
     rows = filtr_pozice(filtr=filtr, kraj=kraj, limit=500, sort=sort)
 
     # Enrich each row with a "sent" marker so the user doesn't double-send
@@ -184,6 +185,14 @@ def pozice_page():
             r["sent_status"] = info["status"]
         else:
             r["sent"] = False
+
+    # Apply status filter (after sent/has_dm enrichment)
+    if status == "ready":
+        rows = [r for r in rows if r.get("has_dm") and not r.get("sent")]
+    elif status == "sent":
+        rows = [r for r in rows if r.get("sent")]
+    elif status == "nodm":
+        rows = [r for r in rows if not r.get("has_dm") and not r.get("sent")]
 
     titulky = {
         "aktualizovane": "Aktualizovane pozice",
@@ -206,6 +215,7 @@ def pozice_page():
 
     return render_template("pozice.html",
                            rows=rows, filtr=filtr, kraj=kraj, sort=sort,
+                           status=status,
                            titulek=titulky.get(filtr, "Pozice"),
                            popisek=popisky.get(filtr, ""),
                            kraje=KRAJE)
