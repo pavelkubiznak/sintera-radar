@@ -1,0 +1,185 @@
+{% extends "_layout.html" %}
+{% set active_page = 'batch_ready' %}
+{% block title %}Připraveno oslovit — Sintera Radar{% endblock %}
+
+{% block extra_css %}
+<style>
+    .dm-card { background: #fff; border-radius: 12px; padding: 18px 22px;
+               border: 1px solid #e2e2e2; margin-bottom: 14px; }
+    .dm-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+    .dm-card-top { display: flex; justify-content: space-between;
+                   align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+    .dm-firma { font-size: 1.1em; font-weight: 700; }
+    .dm-firma a { color: #1e1b4b; text-decoration: none; }
+    .dm-firma a:hover { color: #6366f1; }
+    .dm-meta { font-size: 0.85em; color: #666; margin-top: 4px; }
+    .dm-meta a { color: #6366f1; text-decoration: none; }
+    .dm-signal { font-size: 0.82em; color: #555; margin-top: 6px;
+                  display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .source-badge { padding: 1px 8px; border-radius: 5px;
+                    font-size: 0.72em; font-weight: 700; }
+    .source-linkedin { background: #dbeafe; color: #2563eb; }
+    .source-hunter { background: #fef3c7; color: #a16207; }
+    .stat-pill { padding: 1px 7px; border-radius: 4px;
+                  font-size: 0.7em; font-weight: 600; background: #f1f5f9; color: #64748b; }
+    .stat-aktual { background: #fef2f2; color: #dc2626; }
+    .stat-opak { background: #faf5ff; color: #7c3aed; }
+    .stat-probl { background: #fff7ed; color: #ea580c; }
+
+    .dm-text-wrap { padding: 14px 16px; background: #f8f7ff;
+                    border-radius: 8px; margin-bottom: 12px; }
+    .dm-text { white-space: pre-wrap; font-size: 0.88em; line-height: 1.6;
+               font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+    .dm-char-count { font-size: 0.75em; color: #888; margin-top: 6px; }
+
+    .dm-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .copy-ok { display: none; color: #16a34a; font-weight: 600; font-size: 0.82em; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="main-header">
+    <h1>Připraveno oslovit</h1>
+    <div class="subtitle">
+        Předgenerované DMs pro top {{ dms|length }} priority firem
+        z filtru "<strong>{{ filtr }}</strong>".
+        Mix LinkedIn DM + HR Hunter email outreach, řazeno podle naléhavosti.
+    </div>
+</div>
+
+<div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; align-items:center;">
+    <span style="color:#64748b; font-size:0.85em;">Limit:</span>
+    {% for n in [10, 20, 30, 50] %}
+    <a href="/batch-ready?filtr={{ filtr }}{% if kraj %}&kraj={{ kraj }}{% endif %}&limit={{ n }}"
+       class="btn {% if limit == n %}btn-primary{% else %}btn-outline{% endif %} btn-sm">
+        Top {{ n }}
+    </a>
+    {% endfor %}
+    <span style="margin-left:12px; color:#64748b; font-size:0.85em;">Filtr:</span>
+    {% for f, label in [('aktualizovane', 'Aktualizované'), ('problematicke', 'Problematické'), ('opakovane', 'Opakované'), ('starnouci', 'Stárnoucí')] %}
+    <a href="/batch-ready?filtr={{ f }}{% if kraj %}&kraj={{ kraj }}{% endif %}&limit={{ limit }}"
+       class="btn {% if filtr == f %}btn-primary{% else %}btn-outline{% endif %} btn-sm">
+        {{ label }}
+    </a>
+    {% endfor %}
+</div>
+
+{% if not dms %}
+<div class="card" style="background:#f8fafc; text-align:center; padding:30px;">
+    <h3 style="color:#64748b; margin-bottom:8px;">Zatím žádné DMs</h3>
+    <p style="color:#888; font-size:0.9em;">
+        Nejprve obohať kontakty na <a href="/firmy" style="color:#6366f1;">/firmy</a>
+        (HR Hunter — auto-enrich), pak se sem vrať.
+    </p>
+</div>
+{% endif %}
+
+{% for dm in dms %}
+<div class="dm-card" id="dm-{{ loop.index }}">
+    <div class="dm-card-top">
+        <div style="flex:1;">
+            <div class="dm-firma">
+                {{ loop.index }}. <a href="/firma/{{ dm.firma_norm }}">{{ dm.firma }}</a>
+                {% if dm.contact_source == 'scraped' %}
+                <span class="source-badge source-hunter" title="Kontakt nalezen přes HR Hunter (web firmy)">HR Hunter</span>
+                {% else %}
+                <span class="source-badge source-linkedin" title="Kontakt z LinkedIn databáze">LinkedIn</span>
+                {% endif %}
+            </div>
+            <div class="dm-meta">
+                <strong>{{ dm.kontakt }}</strong>
+                {% if dm.kontakt_title %} — {{ dm.kontakt_title }}{% endif %}
+                {% if dm.linkedin_url %} · <a href="{{ dm.linkedin_url }}" target="_blank">LinkedIn profil</a>{% endif %}
+                {% if dm.email %} · <a href="mailto:{{ dm.email }}">{{ dm.email }}</a>{% endif %}
+                {% if dm.telefon %} · <a href="tel:{{ dm.telefon }}">{{ dm.telefon }}</a>{% endif %}
+            </div>
+            <div class="dm-signal">
+                {% if dm.firma_aktual %}<span class="stat-pill stat-aktual">{{ dm.firma_aktual }} aktualizov.</span>{% endif %}
+                {% if dm.firma_opak %}<span class="stat-pill stat-opak">{{ dm.firma_opak }} opakovaných</span>{% endif %}
+                {% if dm.firma_probl %}<span class="stat-pill stat-probl">{{ dm.firma_probl }} problematick.</span>{% endif %}
+                {% if dm.firma_pozic %}<span class="stat-pill">{{ dm.firma_pozic }} pozic celkem</span>{% endif %}
+                {% if dm.dni_aktivni %}<span class="stat-pill">{{ dm.dni_aktivni }} dni otev.</span>{% endif %}
+                {% if dm.misto %}<span class="stat-pill">{{ dm.misto }}</span>{% endif %}
+            </div>
+            <div style="margin-top:6px; font-size:0.82em; color:#888;">
+                Ref. pozice: <strong>{{ dm.pozice }}</strong>
+            </div>
+        </div>
+    </div>
+
+    <div class="dm-text-wrap">
+        <div class="dm-text" id="text-{{ loop.index }}">{{ dm.zprava }}</div>
+        <div class="dm-char-count">{{ dm.char_count }} znaků</div>
+    </div>
+
+    <div class="dm-actions">
+        <button class="btn btn-primary btn-sm" onclick="copyDM({{ loop.index }})">Zkopírovat zprávu</button>
+        <span class="copy-ok" id="copy-ok-{{ loop.index }}">Zkopírováno!</span>
+        {% if dm.linkedin_url %}
+        <a href="{{ dm.linkedin_url }}" target="_blank" class="btn btn-outline btn-sm">Otevřít LinkedIn</a>
+        {% endif %}
+        {% if dm.email %}
+        {% set subj = ('K pozici ' + dm.pozice + ' u Vás')|urlencode %}
+        {% set body = dm.zprava|urlencode %}
+        <a href="mailto:{{ dm.email }}?subject={{ subj }}&body={{ body }}"
+           class="btn btn-outline btn-sm"
+           onclick="markSent({{ loop.index }}, '{{ dm.firma_norm }}', '{{ dm.firma|e }}', '{{ dm.kontakt|e }}', '{{ dm.linkedin_url|e }}', 'Email', '{{ dm.kraj }}')">
+            Otevřít v mailu
+        </a>
+        {% endif %}
+        <button class="btn btn-green btn-sm"
+                onclick="markSent({{ loop.index }}, '{{ dm.firma_norm }}', '{{ dm.firma|e }}', '{{ dm.kontakt|e }}', '{{ dm.linkedin_url|e }}', '{{ 'Email' if dm.contact_source == 'scraped' else 'LinkedIn DM' }}', '{{ dm.kraj }}')">
+            Označit jako odesláno
+        </button>
+        <a href="/firma/{{ dm.firma_norm }}" class="btn btn-outline btn-sm">Detail firmy</a>
+    </div>
+</div>
+{% endfor %}
+
+{% if dms %}
+<div style="margin-top:16px; display:flex; gap:8px;">
+    <a href="/" class="btn btn-outline btn-sm">Dashboard</a>
+    <a href="/pozice?filtr=aktualizovane&status=ready" class="btn btn-outline btn-sm">Pozice (ready)</a>
+    <a href="/outreach" class="btn btn-outline btn-sm">Outreach CRM</a>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function copyDM(idx) {
+    var t = document.getElementById('text-' + idx);
+    navigator.clipboard.writeText(t.textContent).then(function() {
+        var ok = document.getElementById('copy-ok-' + idx);
+        ok.style.display = 'inline';
+        setTimeout(function() { ok.style.display = 'none'; }, 1500);
+    });
+}
+
+function markSent(idx, firmaNorm, firma, kontakt, kontaktUrl, kanal, kraj) {
+    fetch('/api/mark-contacted', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            firma: firma, firma_norm: firmaNorm,
+            kontakt: kontakt, kontakt_url: kontaktUrl,
+            kanal: kanal, kraj: kraj,
+        }),
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.ok) {
+            var card = document.getElementById('dm-' + idx);
+            if (card) {
+                card.style.opacity = '0.5';
+                card.style.background = '#f0fdf4';
+                card.style.borderColor = '#22c55e';
+                // Add a checkmark badge
+                var badge = document.createElement('div');
+                badge.innerHTML = '<span style="color:#15803d; font-weight:700; font-size:0.9em;">&#10004; Odesláno</span>';
+                badge.style.marginTop = '6px';
+                card.appendChild(badge);
+            }
+        }
+    });
+}
+</script>
+{% endblock %}

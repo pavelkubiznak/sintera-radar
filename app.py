@@ -23,7 +23,8 @@ from database import (init_db, uloz_nabidky, nacti_nabidky, statistiky, exportuj
                        normalize_company, firma_detail, dashboard_stats,
                        filtr_pozice, firmy_prehled, firma_search, firma_bulk_lookup,
                        generate_missile_dms, salary_benchmark, analytics_export_data,
-                       generate_dm_for_position, obory_with_counts, OBORY_DISPLAY)
+                       generate_dm_for_position, obory_with_counts, OBORY_DISPLAY,
+                       generate_batch_dms)
 
 app = Flask(__name__)
 init_db()
@@ -277,6 +278,19 @@ def firmy_page():
                            kraje=KRAJE,
                            obory=obory_with_counts(),
                            OBORY_DISPLAY=OBORY_DISPLAY)
+
+
+@app.route("/batch-ready")
+def batch_ready_page():
+    """Pre-generated DMs for top priority ready-to-act firms.
+    Daily morning workflow: open page → see 20 DMs ready to send."""
+    filtr = request.args.get("filtr", "aktualizovane")
+    kraj = request.args.get("kraj", "")
+    limit = min(int(request.args.get("limit", 20)), 50)
+    dms = generate_batch_dms(filtr=filtr, kraj=kraj, limit=limit)
+    return render_template("batch_ready.html",
+                           dms=dms, filtr=filtr, kraj=kraj, limit=limit,
+                           kraje=KRAJE)
 
 
 @app.route("/firmy/bulk", methods=["GET", "POST"])

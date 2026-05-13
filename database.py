@@ -3833,6 +3833,70 @@ def _best_named_kontakt(firma_norm: str) -> Optional[dict]:
     }
 
 
+def generate_batch_dms(filtr: str = "aktualizovane", kraj: str = "",
+                        limit: int = 20) -> list:
+    """Batch DM generator for the 'Připraveno oslovit' workflow.
+
+    Pre-generates DMs for the top N unique firms in the given filter,
+    sorted by urgency priority. Returns a list of DM dicts (same shape
+    as generate_dm_for_position output).
+
+    Skips firms where DM generation fails (no contact or validation fail).
+    Skips firms already in outreach (already contacted).
+    """
+    # Pull positions for this filter
+    rows = filtr_pozice(filtr=filtr, kraj=kraj, limit=500, sort="")
+
+    # Mark sent rows via outreach map
+    outreach_map = nacti_outreach_map()
+    for r in rows:
+        fn = normalize_company(r.get("firma", ""))
+        r["sent"] = fn in outreach_map
+
+    # Filter to "ready" (has_dm, not sent), dedup by firma, sort by priority
+    def _priority(r):
+        akt = 1 if (r.get("publikovano")
+                    and "ktualizov" in r.get("publikovano", "")) else 0
+        opak = 1 if r.get("predchozi_job_id") else 0
+        scanu = r.get("pocet_scanu", 0) or 0
+        dni = r.get("dni_aktivni") or 0
+        return -(akt * 30 + opak * 20 + scanu * 5 + dni)
+
+    ready = [r for r in rows if r.get("has_dm") and not r.get("sent")]
+    seen = set()
+    unique = []
+    for r in ready:
+        fn = normalize_company(r.get("firma", ""))
+        if fn in seen:
+            continue
+        seen.add(fn)
+        unique.append(r)
+    unique.sort(key=_priority)
+
+    # Generate DM for each (up to limit)
+    out = []
+    for r in unique[:limit]:
+        try:
+            dm = generate_dm_for_position(
+                r["firma"], r["pozice"],
+                kraj=r.get("kraj", ""),
+                url=r.get("url", ""),
+            )
+            if dm:
+                # Enrich with row context
+                dm["firma_pozic"] = r.get("firma_pozic", 0)
+                dm["firma_aktual"] = r.get("firma_aktual", 0)
+                dm["firma_opak"] = r.get("firma_opak", 0)
+                dm["firma_probl"] = r.get("firma_probl", 0)
+                dm["dni_aktivni"] = r.get("dni_aktivni", 0)
+                dm["pocet_scanu"] = r.get("pocet_scanu", 0)
+                dm["misto"] = r.get("misto", "")
+                out.append(dm)
+        except Exception:
+            continue  # skip and move on
+    return out
+
+
 # ── Main MISSILE generator ───────────────────────────────────────
 
 def generate_missile_dms(kraj: str = "", limit: int = 50,
