@@ -322,6 +322,15 @@ def init_db() -> None:
                 trvani_ms           INTEGER
             );
 
+            -- Watchlist: starred firms for personal tracking
+            CREATE TABLE IF NOT EXISTS watchlist (
+                firma_norm      TEXT PRIMARY KEY,
+                firma           TEXT NOT NULL,
+                pridano         TEXT NOT NULL,
+                poznamka        TEXT DEFAULT '',
+                priority        INTEGER DEFAULT 0
+            );
+
             CREATE INDEX IF NOT EXISTS idx_dm_company ON decision_makers(company_normalized);
             CREATE INDEX IF NOT EXISTS idx_dm_kraj    ON decision_makers(kraj);
             CREATE INDEX IF NOT EXISTS idx_dm_profile ON decision_makers(profile_url);
@@ -3872,6 +3881,137 @@ def _best_named_kontakt(firma_norm: str) -> Optional[dict]:
         "company_normalized": firma_norm,
         "gender": "",  # _detect_gender will infer from last_name
     }
+
+
+# ── Watchlist (starred firms) ───────────────────────────────────
+
+def watchlist_add(firma_norm: str, firma: str, poznamka: str = "") -> None:
+    """Add a firma to the personal watchlist."""
+    if not firma_norm or not firma:
+        return
+    now = datetime.now().isoformat(timespec="seconds")
+    with get_conn() as conn:
+        conn.execute("""
+            INSERT INTO watchlist (firma_norm, firma, pridano, poznamka)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(firma_norm) DO UPDATE SET
+                poznamka = COALESCE(NULLIF(excluded.poznamka, ''), watchlist.poznamka)
+        """, (firma_norm, firma, now, poznamka))
+
+
+def watchlist_remove(firma_norm: str) -> None:
+    """Remove a firma from the watchlist."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM watchlist WHERE firma_norm = ?", (firma_norm,))
+
+
+def watchlist_contains(firma_norm: str) -> bool:
+    with get_conn() as conn:
+        r = conn.execute(
+            "SELECT 1 FROM watchlist WHERE firma_norm = ?", (firma_norm,)
+        ).fetchone()
+    return bool(r)
+
+
+def watchlist_set() -> set:
+    """Return all watchlisted firma_norm as a set."""
+    with get_conn() as conn:
+        rows = conn.execute("SELECT firma_norm FROM watchlist").fetchall()
+    return {r[0] for r in rows}
+
+
+def watchlist_all() -> list:
+    """Return all watchlist entries with firma stats and recent changes."""
+    with get_conn() as conn:
+        # All watchlist rows
+        wl_rows = conn.execute("""
+            SELECT firma_norm, firma, pridano, poznamka
+            FROM watchlist ORDER BY pridano DESC
+        """).fetchall()
+        if not wl_rows:
+            return []
+
+        # Get firma stats and outreach status
+        norms = [r["firma_norm"] for r in wl_rows]
+        outreach_map = nacti_outreach_map()
+
+        results = []
+        for w in wl_rows:
+            fn = w["firma_norm"]
+            # Aggregate active positions for this firma
+            stats = conn.execute("""
+                SELECT COUNT(*) as pocet,
+                       SUM(CASE WHEN publikovano LIKE '%ktualizov%' THEN 1 ELSE 0 END) as aktual,
+                       SUM(CASE WHEN predchozi_job_id IS NOT NULL AND predchozi_job_id != '' THEN 1 ELSE 0 END) as opak,
+                       SUM(CASE WHEN pocet_scanu >= 4 THEN 1 ELSE 0 END) as probl,
+                       MAX(pocet_scanu) as max_scanu,
+                       MAX(datum_posledni_scan) as posledni_scan
+                FROM nabidky
+                WHERE LOWER(firma) IN (
+                    SELECT DISTINCT LOWER(firma) FROM nabidky
+                    WHERE firma != ''
+                ) AND aktivni = 1 AND is_agency = 0
+            """).fetchone()
+            # Actually filter by firma_norm (Python side)
+            firma_rows = conn.execute("""
+                SELECT pocet_scanu, publikovano, predchozi_job_id,
+                       datum_posledni_scan, datum_prvni_scan, firma
+                FROM nabidky
+                WHERE aktivni = 1 AND firma != '' AND is_agency = 0
+            """).fetchall()
+            pocet = aktual = opak = probl = 0
+            max_scanu = 0
+            posledni_scan = ""
+            for fr in firma_rows:
+                if normalize_company(fr["firma"]) != fn:
+                    continue
+                pocet += 1
+                if fr["publikovano"] and "ktualizov" in fr["publikovano"]:
+                    aktual += 1
+                if fr["predchozi_job_id"]:
+                    opak += 1
+                if fr["pocet_scanu"] and fr["pocet_scanu"] >= 4:
+                    probl += 1
+                if fr["pocet_scanu"] and fr["pocet_scanu"] > max_scanu:
+                    max_scanu = fr["pocet_scanu"]
+                if fr["datum_posledni_scan"] and fr["datum_posledni_scan"] > posledni_scan:
+                    posledni_scan = fr["datum_posledni_scan"]
+            # Contact counts
+            ck = conn.execute("""
+                SELECT COUNT(*) as total,
+                       SUM(CASE WHEN LENGTH(COALESCE(jmeno,'')) >= 5
+                            AND LENGTH(COALESCE(email,'')) >= 5
+                            AND zdroj NOT LIKE '%pattern_guess%' THEN 1 ELSE 0 END) as named
+                FROM firma_kontakty WHERE firma_norm = ? AND aktivni = 1
+            """, (fn,)).fetchone()
+            sent_info = outreach_map.get(fn)
+            results.append({
+                "firma_norm": fn,
+                "firma": w["firma"],
+                "pridano": w["pridano"],
+                "poznamka": w["poznamka"] or "",
+                "pocet_pozic": pocet,
+                "aktualizovanych": aktual,
+                "opakovanych": opak,
+                "problematickych": probl,
+                "max_scanu": max_scanu,
+                "posledni_scan": (posledni_scan or "")[:10],
+                "kontakty_total": ck["total"] if ck else 0,
+                "kontakty_named": ck["named"] if ck else 0,
+                "sent": bool(sent_info),
+                "sent_datum": sent_info["datum"] if sent_info else "",
+                "sent_kontakt": sent_info["kontakt"] if sent_info else "",
+            })
+        return results
+
+
+def watchlist_dashboard() -> dict:
+    """Stats for watchlist dashboard widget."""
+    with get_conn() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM watchlist").fetchone()[0]
+        # New aktualizované today for watchlisted firms
+        today = date.today().isoformat()
+    return {"total": total}
 
 
 def generate_batch_dms(filtr: str = "aktualizovane", kraj: str = "",

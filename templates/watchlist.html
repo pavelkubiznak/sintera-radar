@@ -1,0 +1,163 @@
+{% extends "_layout.html" %}
+{% set active_page = 'watchlist' %}
+{% block title %}Sledované firmy — Sintera Radar{% endblock %}
+
+{% block content %}
+<div class="main-header">
+    <h1>Sledované firmy &#9733;</h1>
+    <div class="subtitle">
+        Personal pipeline. Klikni na hvězdičku u jakékoli firmy (na /firmy nebo detailu) a přidá se sem.
+    </div>
+</div>
+
+{% if not rows %}
+<div class="card" style="text-align:center; padding:40px; background:#f8fafc;">
+    <h3 style="color:#64748b; margin-bottom:8px;">Žádné sledované firmy zatím</h3>
+    <p style="color:#888; font-size:0.9em; line-height:1.6;">
+        Otevři <a href="/firmy" style="color:#6366f1;">/firmy</a>, najdi firmu která tě zajímá,
+        a klikni na &#9734; vedle jejího jména. Můžeš taky přidat z detailu firmy.
+    </p>
+</div>
+{% else %}
+
+{% set sent_cnt = rows|selectattr('sent', 'equalto', true)|list|length %}
+{% set aktual_cnt = rows|selectattr('aktualizovanych', 'gt', 0)|list|length %}
+{% set ready_cnt = rows|rejectattr('sent', 'equalto', true)|selectattr('kontakty_named', 'gt', 0)|list|length %}
+
+<div class="stats-row">
+    <div class="stat-card purple">
+        <div class="number">{{ rows|length }}</div>
+        <div class="label">Sledovaných firem</div>
+    </div>
+    <div class="stat-card red" style="background:#fef2f2;">
+        <div class="number" style="color:#dc2626;">{{ aktual_cnt }}</div>
+        <div class="label">Aktuálně s aktualizací</div>
+    </div>
+    <div class="stat-card green">
+        <div class="number">{{ ready_cnt }}</div>
+        <div class="label">Připraveno oslovit</div>
+    </div>
+    <div class="stat-card blue">
+        <div class="number">{{ sent_cnt }}</div>
+        <div class="label">Již osloveno</div>
+    </div>
+</div>
+
+<div class="card" style="padding:0; overflow-x:auto;">
+<table style="margin:0;">
+    <thead>
+        <tr>
+            <th>Firma</th>
+            <th style="text-align:right;">Pozic</th>
+            <th>Signály</th>
+            <th>Kontakty</th>
+            <th>Status</th>
+            <th>Poznámka</th>
+            <th>Přidáno</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in rows %}
+        <tr id="wl-{{ r.firma_norm }}" style="{% if r.sent %}background:#f0fdf4;{% elif r.aktualizovanych %}background:#fef2f2;{% endif %}">
+            <td>
+                <a class="firma-link" href="/firma/{{ r.firma_norm }}">
+                    <strong>{{ r.firma }}</strong>
+                </a>
+            </td>
+            <td style="text-align:right;"><strong>{{ r.pocet_pozic }}</strong></td>
+            <td>
+                <div style="display:flex; gap:4px; flex-wrap:wrap;">
+                {% if r.aktualizovanych %}
+                <span style="background:#fef2f2; color:#dc2626; padding:1px 7px; border-radius:5px; font-size:11px; font-weight:600;">
+                    {{ r.aktualizovanych }} akt.
+                </span>
+                {% endif %}
+                {% if r.opakovanych %}
+                <span style="background:#faf5ff; color:#7c3aed; padding:1px 7px; border-radius:5px; font-size:11px; font-weight:600;">
+                    {{ r.opakovanych }} opak.
+                </span>
+                {% endif %}
+                {% if r.problematickych %}
+                <span style="background:#fff7ed; color:#ea580c; padding:1px 7px; border-radius:5px; font-size:11px; font-weight:600;">
+                    {{ r.problematickych }} probl.
+                </span>
+                {% endif %}
+                {% if r.max_scanu and r.max_scanu >= 4 %}
+                <span style="background:#fee2e2; color:#dc2626; padding:1px 7px; border-radius:5px; font-size:11px; font-weight:700;">
+                    {{ r.max_scanu }}× viděno
+                </span>
+                {% endif %}
+                </div>
+            </td>
+            <td>
+                {% if r.kontakty_named %}
+                <span style="background:#dcfce7; color:#15803d; padding:2px 8px; border-radius:5px; font-size:11px; font-weight:700;">
+                    &#10004; {{ r.kontakty_named }} jmenných
+                </span>
+                {% elif r.kontakty_total %}
+                <span style="background:#fef3c7; color:#a16207; padding:2px 8px; border-radius:5px; font-size:11px; font-weight:600;">
+                    {{ r.kontakty_total }} obecných
+                </span>
+                {% else %}
+                <span style="color:#888; font-size:0.85em;">—</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if r.sent %}
+                <span style="background:#dcfce7; color:#15803d; padding:2px 8px; border-radius:5px; font-size:11px; font-weight:700;"
+                      title="Osloveno {{ r.sent_datum }} — {{ r.sent_kontakt }}">
+                    &#10004; Osloveno
+                </span>
+                {% elif r.kontakty_named or r.pocet_pozic > 0 %}
+                <span style="background:#dbeafe; color:#2563eb; padding:2px 8px; border-radius:5px; font-size:11px; font-weight:600;">
+                    Aktivní
+                </span>
+                {% else %}
+                <span style="color:#888; font-size:0.85em;">—</span>
+                {% endif %}
+            </td>
+            <td style="font-size:0.82em; color:#666;">{{ r.poznamka }}</td>
+            <td style="font-size:0.78em; color:#888;">{{ r.pridano[:10] }}</td>
+            <td>
+                <button onclick="removeFromWatchlist('{{ r.firma_norm }}')"
+                        class="btn btn-outline btn-sm"
+                        style="font-size:11px; color:#dc2626;"
+                        title="Odebrat ze sledování">
+                    &#9734; Odebrat
+                </button>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+
+<div style="margin-top:14px; font-size:0.85em; color:#666; padding:0 6px;">
+    Tip: aktualizované pozice = nejsilnější signál, že firma nábor řeší teď.
+    Klikni na firmu pro detail + kontakty.
+</div>
+
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function removeFromWatchlist(firmaNorm) {
+    if (!confirm('Odebrat firmu ze sledovaných?')) return;
+    fetch('/api/watchlist/remove', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({firma_norm: firmaNorm}),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.ok) {
+            var row = document.getElementById('wl-' + firmaNorm);
+            if (row) row.style.display = 'none';
+        }
+    });
+}
+</script>
+{% endblock %}

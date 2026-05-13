@@ -139,6 +139,12 @@ function updateFilter(name, value) {
             <td><input type="checkbox" class="enrich-cb" data-firma="{{ f.firma|e }}" data-norm="{{ f.firma_norm }}"></td>
             <td class="text-muted">{{ (data.page - 1) * 50 + loop.index }}</td>
             <td>
+                <button class="star-btn" data-firma="{{ f.firma|e }}" data-norm="{{ f.firma_norm }}"
+                        onclick="toggleStar(this)"
+                        title="{% if f.firma_norm in watchlist %}Odebrat ze sledovaných{% else %}Přidat ke sledovaným{% endif %}"
+                        style="background:none; border:none; cursor:pointer; font-size:1.2em; padding:0 4px; vertical-align:middle; color:{% if f.firma_norm in watchlist %}#f59e0b{% else %}#d1d5db{% endif %};">
+                    {% if f.firma_norm in watchlist %}&#9733;{% else %}&#9734;{% endif %}
+                </button>
                 <a class="firma-link" href="/firma/{{ f.firma_norm }}">
                     <strong>{{ f.firma }}</strong>
                 </a>
@@ -345,6 +351,31 @@ function updateFilter(name, value) {
         }
     });
 })();
+
+// ── Watchlist toggle ───────────────────────────────────────────
+function toggleStar(btn) {
+    var firma = btn.dataset.firma;
+    var norm = btn.dataset.norm;
+    var isStarred = btn.textContent.trim() === '★';
+    fetch('/api/watchlist/toggle', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({firma: firma, firma_norm: norm}),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (!d.ok) return;
+        if (d.starred) {
+            btn.textContent = '★';
+            btn.style.color = '#f59e0b';
+            btn.title = 'Odebrat ze sledovaných';
+        } else {
+            btn.textContent = '☆';
+            btn.style.color = '#d1d5db';
+            btn.title = 'Přidat ke sledovaným';
+        }
+    });
+}
 
 // ── Bulk enrichment ────────────────────────────────────────────
 function toggleSelectAll(cb) {

@@ -60,7 +60,14 @@
 
 <div class="firma-header">
     <div>
-        <h1>{{ detail.firma }}</h1>
+        <h1 style="display:flex; align-items:center; gap:8px;">
+            <button id="star-btn" onclick="toggleStar()"
+                    style="background:none; border:none; cursor:pointer; font-size:1.1em; padding:0; color:{% if is_starred %}#f59e0b{% else %}#d1d5db{% endif %};"
+                    title="{% if is_starred %}Odebrat ze sledovaných{% else %}Přidat ke sledovaným{% endif %}">
+                {% if is_starred %}&#9733;{% else %}&#9734;{% endif %}
+            </button>
+            {{ detail.firma }}
+        </h1>
         <div class="firma-tags">
             {% for k in detail.kraje %}
             <span class="tag tag-region">{{ k }}</span>
@@ -345,6 +352,30 @@
 
 {% block scripts %}
 <script>
+function toggleStar() {
+    var btn = document.getElementById('star-btn');
+    var firma = '{{ detail.firma|e }}';
+    var firmaNorm = '{{ detail.firma_norm }}';
+    fetch('/api/watchlist/toggle', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({firma: firma, firma_norm: firmaNorm}),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (!d.ok) return;
+        if (d.starred) {
+            btn.innerHTML = '&#9733;';
+            btn.style.color = '#f59e0b';
+            btn.title = 'Odebrat ze sledovaných';
+        } else {
+            btn.innerHTML = '&#9734;';
+            btn.style.color = '#d1d5db';
+            btn.title = 'Přidat ke sledovaným';
+        }
+    });
+}
+
 function markContacted(firmaNorm, firma, kontakt, kontaktUrl, kraj) {
     const kanal = prompt('Kanal (LinkedIn DM / InMail / Email / Telefon):', 'LinkedIn DM');
     if (!kanal) return;

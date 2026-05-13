@@ -24,7 +24,9 @@ from database import (init_db, uloz_nabidky, nacti_nabidky, statistiky, exportuj
                        filtr_pozice, firmy_prehled, firma_search, firma_bulk_lookup,
                        generate_missile_dms, salary_benchmark, analytics_export_data,
                        generate_dm_for_position, obory_with_counts, OBORY_DISPLAY,
-                       generate_batch_dms)
+                       generate_batch_dms,
+                       watchlist_add, watchlist_remove, watchlist_contains,
+                       watchlist_set, watchlist_all)
 
 app = Flask(__name__)
 init_db()
@@ -277,7 +279,8 @@ def firmy_page():
                            kraj=kraj, obor=obor,
                            kraje=KRAJE,
                            obory=obory_with_counts(),
-                           OBORY_DISPLAY=OBORY_DISPLAY)
+                           OBORY_DISPLAY=OBORY_DISPLAY,
+                           watchlist=watchlist_set())
 
 
 @app.route("/batch-ready")
@@ -430,6 +433,49 @@ def api_enrich_status(job_id):
     if not job:
         return jsonify({"ok": False, "error": "job not found"}), 404
     return jsonify({"ok": True, **job})
+
+
+@app.route("/sledovane")
+def watchlist_page():
+    """Personal watchlist of starred firms with their current state."""
+    rows = watchlist_all()
+    return render_template("watchlist.html", rows=rows)
+
+
+@app.route("/api/watchlist/add", methods=["POST"])
+def api_watchlist_add():
+    data = request.get_json(silent=True) or {}
+    firma = data.get("firma", "").strip()
+    firma_norm = data.get("firma_norm", "").strip() or normalize_company(firma)
+    poznamka = data.get("poznamka", "").strip()
+    if not firma or not firma_norm:
+        return jsonify({"ok": False, "error": "missing firma"}), 400
+    watchlist_add(firma_norm, firma, poznamka)
+    return jsonify({"ok": True, "starred": True})
+
+
+@app.route("/api/watchlist/remove", methods=["POST"])
+def api_watchlist_remove():
+    data = request.get_json(silent=True) or {}
+    firma_norm = data.get("firma_norm", "").strip()
+    if not firma_norm:
+        return jsonify({"ok": False}), 400
+    watchlist_remove(firma_norm)
+    return jsonify({"ok": True, "starred": False})
+
+
+@app.route("/api/watchlist/toggle", methods=["POST"])
+def api_watchlist_toggle():
+    data = request.get_json(silent=True) or {}
+    firma = data.get("firma", "").strip()
+    firma_norm = data.get("firma_norm", "").strip() or normalize_company(firma)
+    if not firma_norm:
+        return jsonify({"ok": False, "error": "missing firma"}), 400
+    if watchlist_contains(firma_norm):
+        watchlist_remove(firma_norm)
+        return jsonify({"ok": True, "starred": False})
+    watchlist_add(firma_norm, firma)
+    return jsonify({"ok": True, "starred": True})
 
 
 @app.route("/settings")
@@ -727,9 +773,11 @@ def firma_detail_page(firma_norm):
     if not detail:
         return "Firma nenalezena", 404
     o_stats = outreach_statistiky()
+    is_starred = watchlist_contains(firma_norm)
     return render_template("firma_detail.html",
                            detail=detail, kraje=KRAJE, o_stats=o_stats,
-                           OUTREACH_STATUSES=OUTREACH_STATUSES)
+                           OUTREACH_STATUSES=OUTREACH_STATUSES,
+                           is_starred=is_starred)
 
 
 @app.route("/add-alias", methods=["POST"])
