@@ -3844,7 +3844,7 @@ def _best_named_kontakt(firma_norm: str) -> Optional[dict]:
     """Return best-named HR contact from firma_kontakty as a synthesized
     decision_makers-like dict. Used as fallback when LinkedIn DM is missing.
 
-    Picks the highest-confidence named contact with both jmeno and email.
+    Picks: 1) contact with HR-like role > 2) with any role > 3) higher confidence.
     Returns None if no usable named contact exists.
     """
     if not firma_norm:
@@ -3856,7 +3856,21 @@ def _best_named_kontakt(firma_norm: str) -> Optional[dict]:
               AND LENGTH(COALESCE(jmeno, '')) >= 5
               AND LENGTH(COALESCE(email, '')) >= 5
               AND zdroj NOT LIKE '%pattern_guess%'
-            ORDER BY confidence DESC, id ASC LIMIT 1
+            ORDER BY
+                /* Prefer HR/personnel roles first */
+                (CASE
+                    WHEN LOWER(COALESCE(pozice,'')) LIKE '%hr%' THEN 3
+                    WHEN LOWER(COALESCE(pozice,'')) LIKE '%personal%' THEN 3
+                    WHEN LOWER(COALESCE(pozice,'')) LIKE '%nábor%' THEN 3
+                    WHEN LOWER(COALESCE(pozice,'')) LIKE '%recruit%' THEN 3
+                    WHEN LOWER(COALESCE(pozice,'')) LIKE '%ředitel%' THEN 2
+                    WHEN LOWER(COALESCE(pozice,'')) LIKE '%director%' THEN 2
+                    WHEN LOWER(COALESCE(pozice,'')) LIKE '%manager%' THEN 2
+                    WHEN COALESCE(pozice,'') != '' THEN 1
+                    ELSE 0 END
+                ) DESC,
+                confidence DESC, id ASC
+            LIMIT 1
         """, (firma_norm,)).fetchall()
     if not rows:
         return None
@@ -3867,12 +3881,13 @@ def _best_named_kontakt(firma_norm: str) -> Optional[dict]:
         return None
     first = parts[0]
     last = parts[-1]
-    # Synthesize a decision_maker-shaped dict
+    # Synthesize a decision_maker-shaped dict.
+    # Don't fabricate "HR" if the scraped role is unknown — leave empty.
     return {
         "first_name": first,
         "last_name": last,
         "full_name": jmeno,
-        "current_title": r.get("pozice", "") or "HR",
+        "current_title": r.get("pozice", "") or "",
         "current_company": "",
         "headline": r.get("pozice", "") or "",
         "profile_url": "",

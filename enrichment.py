@@ -1450,29 +1450,55 @@ def save_enrichment_result(result: dict) -> int:
             """, (firma_norm, firma, result.get("ico", ""),
                   result["website"], "auto", now, now))
 
-        # 2. Insert contacts (skip exact duplicates)
+        # 2. Insert or update contacts.
+        # For exact duplicates (same email+phone+firma), update the
+        # existing row only when the new data has BETTER information
+        # (non-empty pozice/jmeno that was previously empty, or higher
+        # confidence). This way re-enrichment improves existing contacts
+        # rather than skipping them.
         for c in result.get("contacts", []):
             email = (c.get("email") or "").strip().lower()
             telefon = (c.get("telefon") or "").strip()
             if not email and not telefon:
                 continue
-            # Check duplicate
+            new_jmeno = (c.get("jmeno") or "").strip()
+            new_pozice = (c.get("pozice") or "").strip()
+            new_conf = float(c.get("confidence", 0.5))
+
             existing = conn.execute("""
-                SELECT id FROM firma_kontakty
+                SELECT id, jmeno, pozice, confidence FROM firma_kontakty
                 WHERE firma_norm = ? AND COALESCE(email,'') = ? AND COALESCE(telefon,'') = ?
                   AND aktivni = 1
             """, (firma_norm, email, telefon)).fetchone()
+
             if existing:
+                # Decide if we should update
+                fields_to_update = {}
+                if new_jmeno and not (existing["jmeno"] or "").strip():
+                    fields_to_update["jmeno"] = new_jmeno
+                if new_pozice and not (existing["pozice"] or "").strip():
+                    fields_to_update["pozice"] = new_pozice
+                if new_conf > (existing["confidence"] or 0):
+                    fields_to_update["confidence"] = new_conf
+                if fields_to_update:
+                    set_clause = ", ".join("{}=?".format(k) for k in fields_to_update)
+                    params = list(fields_to_update.values()) + [existing["id"]]
+                    conn.execute(
+                        "UPDATE firma_kontakty SET " + set_clause +
+                        " WHERE id = ?",
+                        params,
+                    )
                 continue
+
             conn.execute("""
                 INSERT INTO firma_kontakty
                   (firma_norm, firma, typ, jmeno, pozice, email, telefon,
                    zdroj, confidence, poznamka, datum_zjisteni)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (firma_norm, firma, c.get("typ", "general"),
-                  c.get("jmeno", "") or "", c.get("pozice", "") or "",
+                  new_jmeno, new_pozice,
                   email, telefon, c.get("zdroj", "") or "",
-                  float(c.get("confidence", 0.5)),
+                  new_conf,
                   c.get("poznamka", "") or "", now))
             saved_count += 1
 
