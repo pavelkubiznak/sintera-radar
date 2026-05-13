@@ -425,6 +425,26 @@ def api_enrich_bulk():
     return jsonify({"ok": True, "job_id": job_id, "total": len(pairs)})
 
 
+@app.route("/api/enrich-roles", methods=["POST"])
+def api_enrich_roles():
+    """Refresh pozice (role/title) on existing contacts that have
+    name+email but no role. Body: {firma_norms: [...]} or empty for all."""
+    from enrichment import (find_firms_needing_roles,
+                              bulk_role_refresh_start)
+    data = request.get_json(silent=True) or {}
+    norms = data.get("firma_norms") or []
+    if not norms:
+        norms = find_firms_needing_roles()
+    if not norms:
+        return jsonify({"ok": True, "job_id": None, "total": 0,
+                        "message": "No firms need role refresh."})
+    # Cap at 100 per job for safety
+    if len(norms) > 100:
+        norms = norms[:100]
+    job_id = bulk_role_refresh_start(norms)
+    return jsonify({"ok": True, "job_id": job_id, "total": len(norms)})
+
+
 @app.route("/api/enrich-status/<job_id>")
 def api_enrich_status(job_id):
     """Poll bulk enrichment job status."""

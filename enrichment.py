@@ -1557,6 +1557,185 @@ def get_last_enrichment(firma_norm: str) -> Optional[dict]:
 _bulk_jobs = {}  # job_id → {status, progress, total, results}
 
 
+# ── Focused role-only refresh ────────────────────────────────────
+
+def enrich_firma_roles_only(firma_norm: str) -> dict:
+    """Refresh pozice (role/title) for existing named contacts of a firma.
+
+    Skips ARES, domain discovery, pattern guessing, contact extraction.
+    Just: load cached website → fetch pages → run LLM role attribution
+    → UPDATE existing DB rows with new roles.
+
+    Faster + cheaper than full enrich_firma. Use for filling pozice gaps
+    on firms that were enriched before LLM role attribution existed.
+
+    Returns: {firma_norm, firma, website, updated, status, duration_ms}
+    """
+    from database import get_conn
+    t0 = time.time()
+    result = {
+        "firma_norm": firma_norm,
+        "firma": "",
+        "website": "",
+        "updated": 0,
+        "status": "failed",
+        "errors": [],
+    }
+
+    # Load cached website
+    web = get_firma_web(firma_norm)
+    if not web or not web.get("url"):
+        result["status"] = "no_website"
+        result["duration_ms"] = int((time.time() - t0) * 1000)
+        return result
+    result["website"] = web["url"]
+    result["firma"] = web.get("firma", "") or ""
+
+    # Load existing named contacts without pozice
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT id, jmeno, email, telefon, pozice, confidence
+            FROM firma_kontakty
+            WHERE firma_norm = ? AND aktivni = 1
+              AND LENGTH(COALESCE(jmeno, '')) >= 5
+              AND LENGTH(COALESCE(email, '')) >= 5
+              AND COALESCE(pozice, '') = ''
+              AND zdroj NOT LIKE '%pattern_guess%'
+        """, (firma_norm,)).fetchall()
+        contacts_needing_role = [dict(r) for r in rows]
+
+    if not contacts_needing_role:
+        result["status"] = "nothing_to_do"
+        result["duration_ms"] = int((time.time() - t0) * 1000)
+        return result
+
+    if _lazy_anthropic() is None:
+        result["errors"].append("No ANTHROPIC_API_KEY — cannot attribute roles")
+        result["duration_ms"] = int((time.time() - t0) * 1000)
+        return result
+
+    # Fetch pages (priority-ordered: contact/team pages first)
+    def _page_priority(u):
+        u = (u or "").lower()
+        if any(k in u for k in ("/kontakt", "/lide", "/tym", "/team",
+                                  "/o-nas", "/vedeni", "/management",
+                                  "/people", "/staff", "/contact")):
+            return 0
+        if "/kariera" in u or "/career" in u or "/jobs" in u:
+            return 1
+        if u.count("/") <= 4 and u.endswith("/"):
+            return 2
+        return 3
+
+    try:
+        pages = fetch_pages(result["website"], max_pages=6)
+    except Exception as e:
+        result["errors"].append("fetch_pages: " + str(e))
+        result["duration_ms"] = int((time.time() - t0) * 1000)
+        return result
+
+    page_texts = []
+    for url, html in pages.items():
+        text = page_to_text(html)
+        if text and len(text) > 200:
+            page_texts.append((_page_priority(url), url, text))
+
+    if not page_texts:
+        result["status"] = "no_page_text"
+        result["duration_ms"] = int((time.time() - t0) * 1000)
+        return result
+
+    page_texts.sort(key=lambda x: x[0])
+    combined_text = "\n\n".join(
+        "=== " + url + " ===\n" + text for _, url, text in page_texts
+    )
+
+    # Call LLM role attribution on the contacts
+    try:
+        llm_attribute_roles(contacts_needing_role, combined_text,
+                            result["firma"] or firma_norm)
+    except Exception as e:
+        result["errors"].append("llm_attribute: " + str(e))
+        result["duration_ms"] = int((time.time() - t0) * 1000)
+        return result
+
+    # Apply updates to DB
+    now = datetime.now().isoformat(timespec="seconds")
+    updated = 0
+    with get_conn() as conn:
+        for c in contacts_needing_role:
+            new_pozice = (c.get("pozice") or "").strip()
+            if not new_pozice:
+                continue
+            conn.execute("""
+                UPDATE firma_kontakty
+                SET pozice = ?, poznamka = COALESCE(poznamka, '') || ' | role: LLM-only'
+                WHERE id = ? AND COALESCE(pozice, '') = ''
+            """, (new_pozice, c["id"]))
+            updated += 1
+
+    result["updated"] = updated
+    result["status"] = "success" if updated > 0 else "no_roles_found"
+    result["duration_ms"] = int((time.time() - t0) * 1000)
+    return result
+
+
+def bulk_role_refresh_start(firma_norms: list) -> str:
+    """Background job for role-only refresh on multiple firms."""
+    import threading, uuid
+    job_id = str(uuid.uuid4())[:12]
+    _bulk_jobs[job_id] = {
+        "status": "running",
+        "progress": 0,
+        "total": len(firma_norms),
+        "current": "",
+        "results": [],
+        "started": datetime.now().isoformat(timespec="seconds"),
+        "kind": "roles_only",
+    }
+
+    def _worker():
+        for i, firma_norm in enumerate(firma_norms):
+            _bulk_jobs[job_id]["current"] = firma_norm
+            try:
+                r = enrich_firma_roles_only(firma_norm)
+                _bulk_jobs[job_id]["results"].append({
+                    "firma_norm": firma_norm,
+                    "firma": r.get("firma", ""),
+                    "status": r["status"],
+                    "updated": r["updated"],
+                })
+            except Exception as e:
+                _bulk_jobs[job_id]["results"].append({
+                    "firma_norm": firma_norm,
+                    "firma": "",
+                    "status": "error",
+                    "updated": 0,
+                    "error": str(e),
+                })
+            _bulk_jobs[job_id]["progress"] = i + 1
+        _bulk_jobs[job_id]["status"] = "done"
+        _bulk_jobs[job_id]["current"] = ""
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return job_id
+
+
+def find_firms_needing_roles() -> list:
+    """Return firma_norms of firms that have named contacts without pozice."""
+    from database import get_conn
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT DISTINCT firma_norm FROM firma_kontakty
+            WHERE aktivni = 1
+              AND LENGTH(COALESCE(jmeno, '')) >= 5
+              AND LENGTH(COALESCE(email, '')) >= 5
+              AND COALESCE(pozice, '') = ''
+              AND zdroj NOT LIKE '%pattern_guess%'
+        """).fetchall()
+    return [r[0] for r in rows]
+
+
 def bulk_enrich_start(firmas: list) -> str:
     """Start a background bulk-enrichment job.
     Returns a job_id that can be polled for progress."""
