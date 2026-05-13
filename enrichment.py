@@ -471,6 +471,19 @@ _PHONE_CZ_RE = re.compile(
     r"(\d{3})[\s.\-]?(\d{3})[\s.\-]?(\d{3})\b"
 )
 
+# Strictly generic email local-parts that NEVER have a person attached
+# (an inbox shared by many people, no designated owner on the page).
+_STRICTLY_GENERIC_LOCALS = frozenset({
+    "info", "kontakt", "kontakty", "office", "support", "sales",
+    "obchod", "general", "hello", "podpora", "produkt",
+    "hr", "kariera", "career", "careers", "jobs", "prace", "praca",
+    "personal", "personalni", "personalka", "personalistika",
+    "nabor", "talent", "people", "lide", "recruit", "recruitment",
+    "marketing", "press", "media", "no-reply", "noreply", "do-not-reply",
+    "webadmin", "admin", "webmaster", "info_cz", "fakturace", "ucetni",
+})
+
+
 # HR-context keywords used to score email/phone relevance
 _HR_KEYWORDS = (
     "hr", "personal", "personalist", "personalni", "personální",
@@ -569,19 +582,24 @@ def extract_contacts_regex(text: str, firma: str = "",
             conf = 0.55
 
         # First, try to parse the name from the email itself (jmeno.prijmeni@…)
-        # This is MUCH more reliable than scanning surrounding text.
         jmeno_email = _parse_name_from_email(local_part)
+        # Truly generic inboxes have no person attached (info@, hr@, kariera@).
+        # Specialized regional/department aliases (socialni.chrudim@) MIGHT
+        # have a designated person on the page — we still try text-proximity.
+        is_strictly_generic = local_part in _STRICTLY_GENERIC_LOCALS
         if jmeno_email:
             jmeno, pozice = jmeno_email, ""
             ctype = "person_email" if not is_hr else "named_person"
             conf = min(0.85, conf + 0.10)
+        elif is_strictly_generic:
+            # Generic inbox — no person name from page text.
+            jmeno, pozice = "", ""
         else:
-            # Fallback: find a name in nearby text
+            # Fallback: find a name in nearby text.
             jmeno, pozice = _extract_name_near(text, email, firma=firma)
-            if jmeno and not is_generic:
-                ctype = "named_person" if is_hr or "hr" in (pozice or "").lower() else ctype
-                # Lower confidence — text-proximity matching is fragile
-                conf = min(0.80, conf + 0.05)
+            if jmeno:
+                ctype = "named_person" if "hr" in (pozice or "").lower() else ctype
+                conf = min(0.78, conf + 0.05)
 
         contacts.append({
             "typ": ctype,
@@ -623,7 +641,13 @@ def extract_contacts_regex(text: str, firma: str = "",
             ctype = "phone"
             conf = 0.5
 
-        jmeno, pozice = _extract_name_near(text, raw, firma=firma)
+        # Only look for a name near the phone for non-helpline, non-HR-generic
+        # phones. For helpline/HR-role phones, the "name" is the role, not a
+        # person.
+        if is_helpline:
+            jmeno, pozice = "", ""
+        else:
+            jmeno, pozice = _extract_name_near(text, raw, firma=firma)
         contacts.append({
             "typ": ctype,
             "jmeno": jmeno or "",
@@ -645,24 +669,48 @@ _CZ_NAME_RE = re.compile(
     r"([A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][a-záčďéěíňóřšťúůýž]{2,}(?:ová)?)"  # last
 )
 
-# Words that look like names but are noise (navigation menus, page titles)
+# Words that look like names but are noise (navigation menus, page titles,
+# department/section labels, business jargon).
 _NAME_NOISE = {
+    # Navigation / page chrome
     "kontakty", "kariera", "kariéra", "aktuality", "služby", "pojištění",
     "produkty", "novinky", "domů", "obchod", "kontakt", "menu",
-    "nahoru", "stránka", "navigace", "domains", "podmínky", "ochrana",
-    "pravidla", "soubory", "cookies", "zpráva", "služby",
-    "stránek", "stránce", "stránku", "spravujeme", "spravované",
-    "spolupracujeme", "spolupracujte", "přidat", "přidejte", "informace",
+    "nahoru", "stránka", "stránek", "stránce", "stránku", "navigace",
+    "domains", "domain", "soubory", "cookies", "zpráva",
+    "podmínky", "podmínek", "ochrana", "pravidla", "soukromí",
     "potřebujete", "potřebujeme", "můžeme", "děkujeme", "děkuji",
+    "informace", "spravujeme", "spravované", "spolupracujeme",
+    "spolupracujte", "přidat", "přidejte", "vstoupit", "přihlásit",
+    "přihlášení", "registrace", "registrovat",
+    # Cities / regions (false positives for name extraction)
     "společnost", "praha", "brno", "ostrava", "plzeň", "liberec",
     "olomouc", "pardubice", "zlín", "hradec", "ústí", "české",
-    "moravský", "slezský", "středočeský", "jihočeský", "královéhradecký",
-    "pardubický", "vysočina", "jihomoravský", "olomoucký", "moravskoslezský",
+    "budějovice", "boleslav", "karlovy", "varech", "jihlava",
+    "moravský", "moravské", "moravská", "slezský", "středočeský",
+    "jihočeský", "královéhradecký", "pardubický", "vysočina",
+    "jihomoravský", "olomoucký", "moravskoslezský",
     "ústecký", "liberecký", "plzeňský", "karlovarský", "zlínský",
+    # Departments / sections / roles (these come up next to role emails)
     "fakturační", "fakturace", "kanceláře", "kancelář",
     "klientský", "zákaznický", "servis", "infolinka",
-    "soukromí", "podmínek", "podmínky",
-    "ceník", "produkt", "vstoupit", "přihlásit", "přihlášení",
+    "ceník", "produkt", "produktové", "produktový",
+    "výroba", "výrobní", "výrobou", "montáž", "montážní",
+    "oddělení", "oddělením", "divize", "závod", "závodní",
+    "provoz", "provozní", "sekce", "úsek", "skupina",
+    "vedení", "vedoucí", "ředitel", "ředitelka", "ředitelství",
+    "personální", "personalistika", "personalistka", "personalista",
+    "obchodní", "obchod", "marketing", "marketingový", "marketingová",
+    "tým", "týmu", "týmem", "týmy", "týmů",
+    "identifikační", "identifikace", "identifikační",
+    "kontaktní", "kontakt", "kontakta",
+    "stáhněte", "stáhnout", "úvod", "úvodní", "hlavní",
+    # Generic business adjectives
+    "veřejná", "veřejné", "veřejný", "soukromá", "soukromý", "soukromé",
+    "centrální", "lokální", "regionální", "globální",
+    "pobočka", "pobočky", "pobočku", "filiálka",
+    "kontaktovat", "spojte", "napište", "voláme", "voláte",
+    # Common UI strings
+    "akce", "více", "více informací", "zobrazit", "číst", "stáhnout",
 }
 
 
