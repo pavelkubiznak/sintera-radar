@@ -1987,7 +1987,7 @@ def nacti_outreach_map() -> dict:
 
 
 def outreach_statistiky() -> dict:
-    """Statistiky oslovení."""
+    """Statistiky oslovení s response rate per channel."""
     with get_conn() as conn:
         total = conn.execute("SELECT COUNT(*) FROM outreach").fetchone()[0]
         per_status = conn.execute("""
@@ -1997,10 +1997,46 @@ def outreach_statistiky() -> dict:
         recent = conn.execute("""
             SELECT * FROM outreach ORDER BY datum_osloveni DESC LIMIT 20
         """).fetchall()
+
+        # Per-channel breakdown with response rate
+        per_kanal = conn.execute("""
+            SELECT kanal,
+                   COUNT(*) as total,
+                   SUM(CASE WHEN status IN ('odpovedela','schuzka','klient') THEN 1 ELSE 0 END) as kladne,
+                   SUM(CASE WHEN status IN ('odmitnuto') THEN 1 ELSE 0 END) as odmitnuto,
+                   SUM(CASE WHEN status = 'odeslano' THEN 1 ELSE 0 END) as bez_reakce,
+                   SUM(CASE WHEN status = 'zobrazeno' THEN 1 ELSE 0 END) as zobrazeno,
+                   SUM(CASE WHEN status = 'klient' THEN 1 ELSE 0 END) as klient
+            FROM outreach
+            GROUP BY kanal
+            ORDER BY total DESC
+        """).fetchall()
+        # Convert + add computed fields
+        per_kanal_list = []
+        for r in per_kanal:
+            d = dict(r)
+            t = d["total"] or 1
+            d["response_rate"] = round(100 * (d["kladne"] or 0) / t, 1)
+            d["conversion_rate"] = round(100 * (d["klient"] or 0) / t, 1)
+            per_kanal_list.append(d)
+
+        # Weekly trend (last 4 weeks)
+        weekly = conn.execute("""
+            SELECT strftime('%Y-W%W', datum_osloveni) as tyden,
+                   COUNT(*) as pocet,
+                   SUM(CASE WHEN status IN ('odpovedela','schuzka','klient') THEN 1 ELSE 0 END) as kladne
+            FROM outreach
+            WHERE datum_osloveni >= date('now', '-28 days')
+            GROUP BY tyden
+            ORDER BY tyden DESC
+        """).fetchall()
+
     return {
         "total": total,
         "per_status": [dict(r) for r in per_status],
         "recent": [dict(r) for r in recent],
+        "per_kanal": per_kanal_list,
+        "weekly": [dict(r) for r in weekly],
     }
 
 

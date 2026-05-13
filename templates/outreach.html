@@ -27,6 +27,82 @@
     {% endfor %}
 </div>
 
+{% if o_stats.per_kanal %}
+<div class="card" style="margin-bottom:20px;">
+    <h2 style="margin-bottom:10px;">Konverze podle kanálu</h2>
+    <div style="font-size:0.82em; color:#888; margin-bottom:12px;">
+        Response rate = % zpráv, na které kontakt nějak reagoval (odpověděl, schůzka, klient).
+        Conversion = % proměněných na klienta.
+    </div>
+    <table style="margin:0;">
+        <thead>
+            <tr>
+                <th>Kanál</th>
+                <th style="text-align:right;">Odesláno</th>
+                <th style="text-align:right;">Bez reakce</th>
+                <th style="text-align:right;">Pozitivní</th>
+                <th style="text-align:right;">Klient</th>
+                <th style="text-align:right;">Odmítnuto</th>
+                <th style="text-align:right;">Response %</th>
+                <th style="text-align:right;">Conversion %</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for k in o_stats.per_kanal %}
+            <tr>
+                <td><strong>{{ k.kanal or '—' }}</strong></td>
+                <td style="text-align:right;">{{ k.total }}</td>
+                <td style="text-align:right; color:#888;">{{ k.bez_reakce }}</td>
+                <td style="text-align:right; color:#15803d;">
+                    <strong>{{ k.kladne }}</strong>
+                </td>
+                <td style="text-align:right; color:#059669;">
+                    {% if k.klient %}<strong>{{ k.klient }}</strong>{% else %}0{% endif %}
+                </td>
+                <td style="text-align:right; color:#dc2626;">{{ k.odmitnuto }}</td>
+                <td style="text-align:right;">
+                    <span style="background:{% if k.response_rate >= 15 %}#dcfce7; color:#15803d{% elif k.response_rate >= 5 %}#fef3c7; color:#a16207{% else %}#fee2e2; color:#dc2626{% endif %};
+                                  padding:2px 10px; border-radius:10px; font-weight:600; font-size:0.85em;">
+                        {{ k.response_rate }} %
+                    </span>
+                </td>
+                <td style="text-align:right;">
+                    {% if k.conversion_rate > 0 %}
+                    <span style="background:#d1fae5; color:#059669; padding:2px 10px; border-radius:10px; font-weight:600; font-size:0.85em;">
+                        {{ k.conversion_rate }} %
+                    </span>
+                    {% else %}—{% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if o_stats.weekly %}
+<div class="card" style="margin-bottom:20px;">
+    <h2 style="margin-bottom:10px;">Tento + minulé 3 týdny</h2>
+    <table style="margin:0;">
+        <thead>
+            <tr><th>Týden</th><th style="text-align:right;">Osloveno</th><th style="text-align:right;">Pozitivní reakce</th><th style="text-align:right;">Rate</th></tr>
+        </thead>
+        <tbody>
+            {% for w in o_stats.weekly %}
+            <tr>
+                <td>{{ w.tyden }}</td>
+                <td style="text-align:right;">{{ w.pocet }}</td>
+                <td style="text-align:right; color:#15803d;">{{ w.kladne }}</td>
+                <td style="text-align:right; color:#888;">
+                    {% if w.pocet %}{{ (100 * w.kladne / w.pocet)|round(1) }} %{% else %}—{% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
 <div class="filters">
     <a href="/outreach" class="btn btn-sm {% if not status_filter %}btn-primary{% else %}btn-outline{% endif %}">Vse</a>
     {% for s in OUTREACH_STATUSES %}
