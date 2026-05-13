@@ -186,9 +186,51 @@ def pozice_page():
         else:
             r["sent"] = False
 
+    # Pre-compute summary counts BEFORE status filter so header is
+    # consistent regardless of active tab. Counters reflect UNIQUE firms
+    # (not raw positions) because action = 1 DM per firma.
+    def _firma_norm(r):
+        return normalize_company(r.get("firma", ""))
+
+    firms_ready = set()
+    firms_sent = set()
+    firms_nodm = set()
+    for r in rows:
+        fn = _firma_norm(r)
+        if r.get("sent"):
+            firms_sent.add(fn)
+        elif r.get("has_dm"):
+            firms_ready.add(fn)
+        else:
+            firms_nodm.add(fn)
+    counts = {
+        "ready": len(firms_ready),
+        "sent": len(firms_sent),
+        "nodm": len(firms_nodm),
+        "total_rows": len(rows),
+    }
+
+    def _priority(r):
+        aktualizovano = 1 if (r.get("publikovano") and "ktualizov" in r.get("publikovano", "")) else 0
+        opak = 1 if r.get("predchozi_job_id") else 0
+        scanu = r.get("pocet_scanu", 0) or 0
+        dni = r.get("dni_aktivni") or 0
+        return -(aktualizovano * 30 + opak * 20 + scanu * 5 + dni)
+
     # Apply status filter (after sent/has_dm enrichment)
     if status == "ready":
         rows = [r for r in rows if r.get("has_dm") and not r.get("sent")]
+        # Deduplicate by firma — 1 DM per firma. Then sort by priority.
+        seen = set()
+        unique_rows = []
+        for r in rows:
+            fn = _firma_norm(r)
+            if fn in seen:
+                continue
+            seen.add(fn)
+            unique_rows.append(r)
+        rows = unique_rows
+        rows.sort(key=_priority)
     elif status == "sent":
         rows = [r for r in rows if r.get("sent")]
     elif status == "nodm":
@@ -215,7 +257,7 @@ def pozice_page():
 
     return render_template("pozice.html",
                            rows=rows, filtr=filtr, kraj=kraj, sort=sort,
-                           status=status,
+                           status=status, counts=counts,
                            titulek=titulky.get(filtr, "Pozice"),
                            popisek=popisky.get(filtr, ""),
                            kraje=KRAJE)

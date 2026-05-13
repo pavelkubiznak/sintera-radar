@@ -47,10 +47,6 @@
 {% endblock %}
 
 {% block content %}
-{% set total_count = rows|length %}
-{% set sent_count = rows|selectattr('sent', 'equalto', true)|list|length %}
-{% set actionable_count = rows|rejectattr('sent', 'equalto', true)|selectattr('has_dm', 'equalto', true)|list|length %}
-{% set no_dm_count = rows|rejectattr('sent', 'equalto', true)|rejectattr('has_dm', 'equalto', true)|list|length %}
 {% macro status_link(s, label) -%}
   /pozice?{% if filtr %}filtr={{ filtr }}&{% endif %}{% if kraj %}kraj={{ kraj }}&{% endif %}{% if sort %}sort={{ sort }}&{% endif %}status={{ s }}
 {%- endmacro %}
@@ -66,28 +62,29 @@
             Vše
         </a>
         <a href="{{ status_link('ready') }}"
-           title="Pozice s kontaktem (LinkedIn nebo HR Hunter), neosloveno"
+           title="Firmy s nalezeným kontaktem (LinkedIn nebo HR Hunter), zatím neosloveno. 1 řádek = 1 firma."
            style="padding:4px 12px; border-radius:14px; text-decoration:none;
                   {% if status == 'ready' %}background:#15803d; color:#fff; font-weight:600;{% else %}background:#dcfce7; color:#15803d;{% endif %}">
-            &#9673; Připraveno oslovit
-            {% if not status %}<strong>({{ actionable_count }})</strong>{% endif %}
+            &#9673; Připraveno oslovit <strong>({{ counts.ready }})</strong>
         </a>
         <a href="{{ status_link('sent') }}"
            title="Pozice z firem, které již máš osloveno"
            style="padding:4px 12px; border-radius:14px; text-decoration:none;
                   {% if status == 'sent' %}background:#16a34a; color:#fff; font-weight:600;{% else %}background:#f0fdf4; color:#15803d;{% endif %}">
-            &#10004; Osloveno
-            {% if not status %}<strong>({{ sent_count }})</strong>{% endif %}
+            &#10004; Osloveno <strong>({{ counts.sent }})</strong>
         </a>
         <a href="{{ status_link('nodm') }}"
            title="Pozice bez kontaktu — vyžaduje HR Hunter nebo manuální research"
            style="padding:4px 12px; border-radius:14px; text-decoration:none;
                   {% if status == 'nodm' %}background:#64748b; color:#fff; font-weight:600;{% else %}background:#f3f4f6; color:#555;{% endif %}">
-            &#9711; Bez kontaktu
-            {% if not status %}<strong>({{ no_dm_count }})</strong>{% endif %}
+            &#9711; Bez kontaktu <strong>({{ counts.nodm }})</strong>
         </a>
         <span style="color:#888; margin-left:6px;">
-            zobrazeno {{ total_count }} pozic
+            {% if status == 'ready' %}
+                {{ rows|length }} firem, řazeno podle priority
+            {% else %}
+                zobrazeno {{ rows|length }} pozic
+            {% endif %}
         </span>
     </div>
 </div>
