@@ -2315,9 +2315,23 @@ def _decline_word_acc(word: str) -> str:
     if low.endswith("ač"):
         return word + "e"               # prodavač → prodavače, hlídač → hlídače
     if low.endswith("ič"):
-        return word + "e"               # řidič → řidiče, koordinátor? no: technik
+        return word + "e"               # řidič → řidiče
     if low.endswith("éř") or low.endswith("ář"):
         return word + "e"               # bankéř → bankéře, elektrikář → elektrikáře
+
+    # -- Feminine nouns ending in -a → -u (acc) --
+    # sestra → sestru, učitelka → učitelku, programátorka → programátorku
+    # Apply only when the word looks Czech (has diacritics, known suffix,
+    # or is on whitelist). Skips English borrowings like "java", "data".
+    _FEMININE_WHITELIST = {
+        "sestra", "dcera", "matka", "macecha", "mistr", "manka",
+        "vedoucí",  # already handled above? leave it
+    }
+    if low.endswith("a") and len(low) >= 5:
+        has_czech_diacritic = any(c in "áčďéěíňóřšťúůýž" for c in low)
+        ends_fem = low.endswith(("ka", "na", "ina", "ova"))
+        if has_czech_diacritic or ends_fem or low in _FEMININE_WHITELIST:
+            return word[:-1] + "u"
 
     # Default: DON'T guess — return unchanged
     return word
@@ -2344,6 +2358,19 @@ def _decline_role_acc(role_nom: str) -> str:
 
     # Find the main noun position: skip modifiers like "senior", acronyms
     _SKIP = {'senior', 'junior', 'lead', 'head', 'chief', 'key'}
+
+    # Pre-detect head-noun gender so adjectives agree.
+    # If the LAST core word ends in -a/-ka/-ce (feminine markers), all
+    # preceding "-ní/-cí" adjectives should stay (feminine acc = unchanged
+    # for soft-paradigm adjectives like "vrchní"), not decline to "-ho".
+    last_word = words[-1].lower().strip('(),')
+    head_is_feminine = (
+        last_word.endswith(("ka", "na", "ina", "ova"))
+        or last_word in _FEMININE_WHITELIST_FOR_HEAD
+        or (last_word.endswith("a") and len(last_word) >= 5
+            and any(c in "áčďéěíňóřšťúůýž" for c in last_word))
+    )
+
     declined = []
     noun_found = False
     for i, w in enumerate(words):
@@ -2353,16 +2380,26 @@ def _decline_role_acc(role_nom: str) -> str:
                 # Modifier or acronym — keep, don't decline
                 declined.append(w)
             else:
-                # This is the (adjective or) noun — decline it
-                declined.append(_decline_word_acc(w))
-                # Check if NEXT word is the actual noun (this was an adjective)
-                if i + 1 < len(words) and wl.endswith(("ní", "cí", "čí", "ý", "í")):
-                    continue  # adjective — noun is next
-                noun_found = True
+                # Adjective vs noun?
+                is_adj = wl.endswith(("ní", "cí", "čí", "ý", "í"))
+                if is_adj and head_is_feminine:
+                    # Feminine context — keep adjective unchanged (vrchní stays vrchní)
+                    declined.append(w)
+                    if i + 1 < len(words):
+                        continue
+                    noun_found = True
+                else:
+                    # Decline adjective/noun normally
+                    declined.append(_decline_word_acc(w))
+                    if i + 1 < len(words) and is_adj:
+                        continue
+                    noun_found = True
         else:
-            # After main noun — don't decline further
             declined.append(w)
     return ' '.join(declined) + rest
+
+
+_FEMININE_WHITELIST_FOR_HEAD = {"sestra", "dcera", "matka"}
 
 
 # ── Czech vocative ────────────────────────────────────────────────
@@ -3145,6 +3182,11 @@ def _shorten_role(raw: str) -> str:
                r'v\s+oboru|na\s+pozici|do\s+týmu|ve?\s+firmě)\s+.*$',
                '', s, flags=re.IGNORECASE)
 
+    # Strip " - <location>" suffix (common pattern: "Vrchní sestra - Pyšely")
+    # Only strip when there's whitespace around the dash (avoid stripping
+    # parts of "OEM-OEM" or "PHP-Symfony" etc.)
+    s = re.sub(r'\s+[-–—]\s+.+$', '', s)
+
     # Strip trailing seniority (now that pipes/qualifiers are gone)
     s = re.sub(r'\s+(?:senior|junior|lead|ii|iii|I{1,3})\s*$',
                '', s, flags=re.IGNORECASE)
@@ -3302,8 +3344,15 @@ def _misto_locative(city: str) -> str:
     # -ice → -icích (Radonice → Radonicích, Hostomice → Hostomicích)
     if cl.endswith("ice") and len(cl) > 4:
         return "{} {}".format(prep, city[:-1] + "ích")
-    # -y → -ech (Domažlice already handled; fall back for plurals like Teplice)
-    # Already handled in _KNOWN dict above for common cases.
+    # -ely / -ány / -áky → -elech / -anech / -ácích (Pyšely → Pyšelech)
+    if cl.endswith("ely") and len(cl) > 4:
+        return "{} {}".format(prep, city[:-1] + "ech")
+    if cl.endswith("any") and len(cl) > 4:
+        return "{} {}".format(prep, city[:-1] + "ech")
+    # -y at end (plural feminine cities, e.g. Klatovy, Roztoky)
+    # Locative is typically -ech: Klatovy → Klatovech, Roztoky → Roztokech
+    if cl.endswith("y") and len(cl) > 4 and cl[-2] not in "aeiouy":
+        return "{} {}".format(prep, city[:-1] + "ech")  # strip -y, add -ech
     # -ec → -ci (Hradec → Hradci, but also Kolín is in _KNOWN)
     if cl.endswith("ec") and len(cl) > 3:
         return "{} {}".format(prep, city[:-2] + "ci")
