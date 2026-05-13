@@ -33,6 +33,8 @@
               margin-right: 3px; vertical-align: middle; }
     .dm-dot-yes { background: #22c55e; }
     .dm-dot-no { background: #d1d5db; }
+    .dm-dot-hunter { background: #f59e0b; width: 8px; height: 8px;
+                     border-radius: 2px; }
     .dm-dot-sent { display: inline-block; margin-right: 3px; color: #fff;
                    font-size: 0.85em; vertical-align: middle; }
     .btn-dm-sent { background: #16a34a; color: #fff; }
@@ -45,10 +47,32 @@
 {% endblock %}
 
 {% block content %}
+{% set total_count = rows|length %}
+{% set sent_count = rows|selectattr('sent', 'equalto', true)|list|length %}
+{% set actionable_count = rows|rejectattr('sent', 'equalto', true)|selectattr('has_dm', 'equalto', true)|list|length %}
+{% set no_dm_count = rows|rejectattr('sent', 'equalto', true)|rejectattr('has_dm', 'equalto', true)|list|length %}
 <div class="main-header">
     <h1>{{ titulek }}</h1>
     {% if popisek %}
     <div class="subtitle">{{ popisek }}</div>
+    {% endif %}
+    {% if total_count > 0 %}
+    <div style="display:flex; gap:14px; margin-top:8px; flex-wrap:wrap; font-size:0.85em;">
+        <span title="Pozice s nalezeným kontaktem (LinkedIn nebo HR Hunter), zatím neosloveno">
+            <span style="display:inline-block; width:9px; height:9px; background:#22c55e; border-radius:50%; margin-right:4px; vertical-align:middle;"></span>
+            <strong>{{ actionable_count }}</strong> připraveno oslovit
+        </span>
+        <span title="Pozice z firem, které jste již kontaktovali">
+            <span style="display:inline-block; width:9px; height:9px; background:#16a34a; margin-right:4px; vertical-align:middle;">&#10004;</span>
+            <strong>{{ sent_count }}</strong> osloveno
+        </span>
+        <span title="Pozice bez kontaktu — vyžaduje HR Hunter nebo manuální research">
+            <span style="display:inline-block; width:9px; height:9px; background:#d1d5db; border-radius:50%; margin-right:4px; vertical-align:middle;"></span>
+            <strong>{{ no_dm_count }}</strong> bez kontaktu
+        </span>
+        <span style="color:#888;">|</span>
+        <span style="color:#888;">celkem {{ total_count }} pozic</span>
+    </div>
     {% endif %}
 </div>
 
@@ -240,8 +264,13 @@
                     <span class="dm-dot dm-dot-sent">&#10004;</span>Znovu
                 </button>
                 {% elif r.has_dm %}
-                <button class="btn-dm" onclick="toggleDM({{ loop.index }}, '{{ r.firma|e }}', '{{ r.pozice|e }}', '{{ r.kraj|e }}', '{{ r.url|e }}')">
+                <button class="btn-dm" onclick="toggleDM({{ loop.index }}, '{{ r.firma|e }}', '{{ r.pozice|e }}', '{{ r.kraj|e }}', '{{ r.url|e }}')"
+                        {% if r.dm_source == 'scraped' %}title="HR Hunter — email/telefon ze scrapingu webu firmy"{% else %}title="Decision maker z LinkedIn"{% endif %}>
+                    {% if r.dm_source == 'scraped' %}
+                    <span class="dm-dot dm-dot-hunter"></span>Email
+                    {% else %}
                     <span class="dm-dot dm-dot-yes"></span>Zprava
+                    {% endif %}
                 </button>
                 {% else %}
                 <span class="btn-dm btn-dm-no" title="Decision maker nenalezen">
