@@ -457,15 +457,15 @@ function renderContacts(data) {
 
     function renderRow(c) {
         var tl = typeLabel(c.typ);
-        var s = '<div style="padding:8px 10px; border-bottom:1px solid #f0f0f0;">';
-        s += '<div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">';
+        var s = '<div style="padding:10px 12px; border-bottom:1px solid #f0f0f0;">';
+        s += '<div style="display:flex; gap:6px; align-items:baseline; flex-wrap:wrap;">';
+        if (c.jmeno) s += '<strong style="font-size:1.0em; color:#1e1b4b;">' + esc(c.jmeno) + '</strong>';
+        if (c.pozice) s += '<span style="background:#eef2ff; color:#4338ca; padding:2px 8px; border-radius:5px; font-size:0.78em; font-weight:600;">' + esc(c.pozice) + '</span>';
         s += '<span style="background:' + tl.bg + '; color:' + tl.color
              + '; padding:1px 7px; border-radius:5px; font-size:0.7em; font-weight:700;">' + tl.label + '</span>';
         if (c.confidence != null) {
             s += '<span style="font-size:0.7em; color:#888;">conf ' + Number(c.confidence).toFixed(2) + '</span>';
         }
-        if (c.jmeno) s += '<strong style="font-size:0.9em;">' + esc(c.jmeno) + '</strong>';
-        if (c.pozice) s += '<span style="color:#666; font-size:0.85em;">(' + esc(c.pozice) + ')</span>';
         s += '</div>';
         s += '<div style="font-size:0.85em; margin-top:3px; color:#333;">';
         if (c.email) {

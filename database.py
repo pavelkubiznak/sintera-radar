@@ -3984,6 +3984,18 @@ def watchlist_all() -> list:
                             AND zdroj NOT LIKE '%pattern_guess%' THEN 1 ELSE 0 END) as named
                 FROM firma_kontakty WHERE firma_norm = ? AND aktivni = 1
             """, (fn,)).fetchone()
+            # Top 3 named contacts with roles for inline preview
+            top_contacts = conn.execute("""
+                SELECT jmeno, pozice, email, telefon
+                FROM firma_kontakty
+                WHERE firma_norm = ? AND aktivni = 1
+                  AND LENGTH(COALESCE(jmeno,'')) >= 5
+                  AND LENGTH(COALESCE(email,'')) >= 5
+                  AND zdroj NOT LIKE '%pattern_guess%'
+                ORDER BY (CASE WHEN COALESCE(pozice,'') != '' THEN 1 ELSE 0 END) DESC,
+                         confidence DESC, id ASC
+                LIMIT 3
+            """, (fn,)).fetchall()
             sent_info = outreach_map.get(fn)
             results.append({
                 "firma_norm": fn,
@@ -3998,6 +4010,7 @@ def watchlist_all() -> list:
                 "posledni_scan": (posledni_scan or "")[:10],
                 "kontakty_total": ck["total"] if ck else 0,
                 "kontakty_named": ck["named"] if ck else 0,
+                "top_contacts": [dict(c) for c in top_contacts],
                 "sent": bool(sent_info),
                 "sent_datum": sent_info["datum"] if sent_info else "",
                 "sent_kontakt": sent_info["kontakt"] if sent_info else "",

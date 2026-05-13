@@ -1051,6 +1051,114 @@ def extract_contacts_llm(text: str, firma: str,
     return out
 
 
+_LLM_ROLE_PROMPT = """For each contact below, find their role/title at "{firma}" by reading the page text.
+
+Reply with STRICT JSON only (no markdown, no explanation):
+{{"contacts": [{{"email": "...", "pozice": "...short role..."}}]}}
+
+Rules:
+- Match each contact by email.
+- pozice = short role/title in Czech or English (max 6 words),
+  e.g. "HR Manager", "Regional Director", "Personální ředitelka",
+  "Vrchní sestra Pyšely", "Sales Manager Brno", "Recepce".
+- If role is unclear from the text, set pozice to "" — do NOT guess.
+- Include EVERY contact from the input. Empty pozice is OK.
+- DO NOT change the email value. Keep it exactly as given.
+
+Contacts to attribute:
+{contacts_list}
+
+Source page text (multiple pages concatenated):
+{text}
+"""
+
+
+def llm_attribute_roles(contacts: list, page_text: str, firma: str,
+                        force: bool = False) -> list:
+    """For contacts with jmeno+email but empty pozice, use Claude to
+    find their role from the page text. Updates contacts in-place.
+
+    Returns the contacts list (same reference).
+
+    Cost: ~$0.002-0.005 per firma (one Claude Haiku call).
+    """
+    client = _lazy_anthropic()
+    if client is None:
+        return contacts
+
+    # Find contacts that need role attribution
+    targets = []
+    for c in contacts:
+        email = (c.get("email") or "").strip().lower()
+        jmeno = (c.get("jmeno") or "").strip()
+        pozice = (c.get("pozice") or "").strip()
+        zdroj = c.get("zdroj") or ""
+        # Only attribute for: has email + has jmeno + no pozice + real source
+        if not email or not jmeno:
+            continue
+        if pozice and not force:
+            continue
+        if "pattern_guess" in zdroj:
+            continue
+        targets.append(c)
+
+    if not targets or not page_text:
+        return contacts
+
+    contacts_list = "\n".join(
+        "- {} ({})".format(c["jmeno"], c["email"]) for c in targets
+    )
+    # Trim text to fit token budget — Claude Haiku 4.5 has 200K context;
+    # 60K chars ≈ 15K tokens is plenty and gives us room for full
+    # regional/team pages + homepage. Cost: ~$0.004/call.
+    trimmed_text = page_text[:60000]
+    prompt = _LLM_ROLE_PROMPT.format(
+        firma=firma, contacts_list=contacts_list, text=trimmed_text)
+
+    try:
+        response = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=3000,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = "".join(b.text for b in response.content if hasattr(b, "text"))
+    except Exception:
+        return contacts
+
+    # Parse JSON
+    raw = raw.strip()
+    raw = re.sub(r"^```(?:json)?\s*", "", raw)
+    raw = re.sub(r"\s*```$", "", raw)
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        m = re.search(r"\{[\s\S]*\}", raw)
+        if not m:
+            return contacts
+        try:
+            data = json.loads(m.group(0))
+        except Exception:
+            return contacts
+
+    # Apply roles by email match
+    by_email = {}
+    for item in data.get("contacts", []):
+        em = (item.get("email") or "").strip().lower()
+        po = (item.get("pozice") or "").strip()
+        if em and po:
+            by_email[em] = po
+
+    for c in contacts:
+        email = (c.get("email") or "").strip().lower()
+        if email in by_email and not c.get("pozice"):
+            c["pozice"] = by_email[email]
+            prev_note = c.get("poznamka") or ""
+            if "role: LLM" not in prev_note:
+                c["poznamka"] = (prev_note + " | role: LLM").strip(" |")
+
+    return contacts
+
+
 # ── Third-party portal search ─────────────────────────────────────
 
 def search_personalka(firma_name: str, ico: str = "") -> list:
@@ -1145,6 +1253,24 @@ def enrich_firma(firma_name: str, firma_norm: str = "",
                 if (c.get("email") or c.get("telefon"))
                 and (c.get("zdroj") or "").startswith("http")]
 
+    # Collected page texts for LLM role attribution. Stored as
+    # (priority, url, text) so we can sort: contact/team pages first
+    # (they have role context), homepage last (often huge, generic).
+    page_texts = []
+
+    def _page_priority(u):
+        u = (u or "").lower()
+        if any(k in u for k in ("/kontakt", "/lide", "/tym", "/team",
+                                  "/o-nas", "/vedeni", "/management",
+                                  "/people", "/staff", "/contact")):
+            return 0  # highest priority
+        if "/kariera" in u or "/career" in u or "/jobs" in u:
+            return 1
+        # Regional / city sub-pages (often have team listings)
+        if u.count("/") <= 4 and u.endswith("/"):
+            return 2
+        return 3
+
     for idx, ws in enumerate(websites):
         try:
             pages = fetch_pages(ws, max_pages=6)
@@ -1154,6 +1280,9 @@ def enrich_firma(firma_name: str, firma_norm: str = "",
                 result["sources_tried"].append("alt_domain:" + ws + ":pages:" + str(len(pages)))
             for url, html in pages.items():
                 text = page_to_text(html)
+                # Keep text for later role-attribution call (priority-ordered)
+                if text and len(text) > 200:
+                    page_texts.append((_page_priority(url), url, text))
                 regex_contacts = extract_contacts_regex(
                     text, firma=firma_name, source_url=url)
                 all_contacts.extend(regex_contacts)
@@ -1205,7 +1334,30 @@ def enrich_firma(firma_name: str, firma_norm: str = "",
         except Exception as e:
             result["errors"].append("pattern_guess: " + str(e))
 
-    # ── Step 6: Deduplicate & rank ──
+    # ── Step 6: LLM role attribution (if API key set) ──
+    # For all contacts with jmeno+email but no pozice, ask Claude
+    # to find their role/title from the source page text.
+    if _lazy_anthropic() and page_texts:
+        try:
+            need_roles = sum(
+                1 for c in all_contacts
+                if c.get("jmeno") and c.get("email") and not c.get("pozice")
+                and "pattern_guess" not in (c.get("zdroj") or "")
+            )
+            if need_roles > 0:
+                # Build combined text — contact/team pages FIRST
+                # (they contain the role context), then less-relevant pages
+                page_texts.sort(key=lambda x: x[0])
+                combined_text = "\n\n".join(
+                    "=== " + url + " ===\n" + text
+                    for _, url, text in page_texts
+                )
+                llm_attribute_roles(all_contacts, combined_text, firma_name)
+                result["sources_tried"].append("LLM-roles:" + str(need_roles))
+        except Exception as e:
+            result["errors"].append("llm_roles: " + str(e))
+
+    # ── Step 7: Deduplicate & rank ──
     deduplicated = _dedupe_contacts(all_contacts)
 
     # Ranking: HR-named > HR-generic > person > general > guessed > phone
