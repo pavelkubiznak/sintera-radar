@@ -686,10 +686,20 @@ _NAME_NOISE = {
     "společnost", "praha", "brno", "ostrava", "plzeň", "liberec",
     "olomouc", "pardubice", "zlín", "hradec", "ústí", "české",
     "budějovice", "boleslav", "karlovy", "varech", "jihlava",
+    "telč", "kolín", "kladno", "most", "havířov", "karviná", "děčín",
+    "chomutov", "teplice", "frýdek", "místek", "prostějov", "přerov",
+    "třebíč", "trutnov", "tábor", "písek", "klatovy", "sokolov",
+    "kroměříž", "šumperk", "vsetín", "valašské", "meziříčí",
+    "uherské", "uherský", "hradiště", "krumlov", "tišnov", "kuřim",
     "moravský", "moravské", "moravská", "slezský", "středočeský",
     "jihočeský", "královéhradecký", "pardubický", "vysočina",
     "jihomoravský", "olomoucký", "moravskoslezský",
     "ústecký", "liberecký", "plzeňský", "karlovarský", "zlínský",
+    # Directional adjectives (used as regional qualifiers)
+    "severní", "jižní", "východní", "západní", "centrální",
+    "horní", "dolní", "vnitřní", "vnější", "horní", "spodní",
+    "starý", "stará", "staré", "nový", "nová", "nové", "velký",
+    "velká", "velké", "malý", "malá", "malé", "hlavní",
     # Departments / sections / roles (these come up next to role emails)
     "fakturační", "fakturace", "kanceláře", "kancelář",
     "klientský", "zákaznický", "servis", "infolinka",
@@ -704,6 +714,13 @@ _NAME_NOISE = {
     "identifikační", "identifikace", "identifikační",
     "kontaktní", "kontakt", "kontakta",
     "stáhněte", "stáhnout", "úvod", "úvodní", "hlavní",
+    # English business jargon (false positives on bilingual pages)
+    "media", "contact", "press", "marketing", "sales", "support",
+    "customer", "service", "team", "office", "headquarters", "hq",
+    "department", "division", "section",
+    "recepce", "reception", "receptionist", "operator",
+    # Common brand-name fragments seen in our data
+    "activ", "aktiv", "forte", "premium", "professional",
     # Generic business adjectives
     "veřejná", "veřejné", "veřejný", "soukromá", "soukromý", "soukromé",
     "centrální", "lokální", "regionální", "globální",
@@ -715,20 +732,45 @@ _NAME_NOISE = {
 
 
 def _looks_like_name(first: str, last: str) -> bool:
-    """Heuristic: is this pair of words a plausible Czech name?"""
+    """Heuristic: is this pair of words a plausible Czech (or foreign) name?
+    Used by text-proximity fallback — primarily noise-based filtering,
+    plus rejection of obvious noun/adjective endings."""
     f, l = first.lower(), last.lower()
     if f in _NAME_NOISE or l in _NAME_NOISE:
         return False
-    # Last name usually ends in: -ová, -ská, -cká, -á, -ek, -ík, -ák, etc.
-    last_ok = (l.endswith(("ová", "ská", "cká", "ská", "í", "ek", "ík", "ák",
-                            "ný", "tý", "rý", "ický", "ovský", "ánek",
-                            "ec", "ka", "us"))
-               or l.endswith("á") and len(l) > 3
-               or l.endswith(("er", "or", "ar", "berg", "stein", "hammer"))
-               # Foreign names — allow if not in noise
-               or len(l) >= 4)
-    first_ok = len(f) >= 3 and not f.endswith(("ní", "vé", "skou"))
-    return first_ok and last_ok
+
+    # Reject endings that are clearly nouns or adjectives (Czech):
+    #   -ž / -š = often verb stems or nouns (Montáž, oprav, vrhuš)
+    #   -ní = adjective (identifikační, technický → -ní/-cký)
+    #   -ství / -ictví = abstract nouns
+    #   -ace / -ence = abstract nouns
+    #   -ost / -nost = abstract nouns
+    noun_adjective_endings = (
+        "ž", "š",
+        "ní", "ního", "ním", "ních",
+        "ství", "ictví", "ostí",
+        "ace", "ence", "ize",
+        "ost", "nost", "tost",
+        "tní", "vní", "zní",
+    )
+    if l.endswith(noun_adjective_endings):
+        return False
+    if f.endswith(noun_adjective_endings):
+        return False
+
+    # Some bad first-word starters (verb prefixes, articles)
+    if f.startswith(("xx", "vý", "po", "ne", "ne_")):
+        return False
+
+    # Length sanity
+    if len(f) < 3 or len(l) < 3:
+        return False
+
+    # Reject if either word contains a digit
+    if any(c.isdigit() for c in f) or any(c.isdigit() for c in l):
+        return False
+
+    return True
 
 
 _EMAIL_NAME_NOISE = {
