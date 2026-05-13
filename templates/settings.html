@@ -1,0 +1,125 @@
+{% extends "_layout.html" %}
+{% set active_page = 'settings' %}
+{% block title %}Nastavení — Sintera Radar{% endblock %}
+
+{% block content %}
+<div class="main-header">
+    <h1>Nastavení &amp; integrace</h1>
+    <div class="subtitle">Status environment variables na VPS.</div>
+</div>
+
+<div class="card">
+    <h2 style="margin-bottom:14px;">Config status</h2>
+    <table style="margin:0;">
+        <thead>
+            <tr><th>Klíč</th><th>Stav</th><th>Hodnota</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>SMTP_USER</strong> (denní report)</td>
+                <td>{% if cfg.smtp_user %}<span style="color:#15803d;">&#10004; nastaveno</span>{% else %}<span style="color:#dc2626;">&#10006; chybí</span>{% endif %}</td>
+                <td>{{ cfg.smtp_user or '—' }}</td>
+            </tr>
+            <tr>
+                <td><strong>SMTP_PASS</strong></td>
+                <td>{% if cfg.smtp_pass_set %}<span style="color:#15803d;">&#10004; nastaveno</span>{% else %}<span style="color:#dc2626;">&#10006; chybí</span>{% endif %}</td>
+                <td>{% if cfg.smtp_pass_set %}<code>***hidden***</code>{% else %}—{% endif %}</td>
+            </tr>
+            <tr>
+                <td><strong>REPORT_TO</strong></td>
+                <td>{% if cfg.report_to %}<span style="color:#15803d;">&#10004; nastaveno</span>{% else %}<span style="color:#dc2626;">&#10006; chybí</span>{% endif %}</td>
+                <td>{{ cfg.report_to or '—' }}</td>
+            </tr>
+            <tr>
+                <td><strong>SERVER_URL</strong></td>
+                <td>{% if cfg.server_url %}<span style="color:#15803d;">&#10004; nastaveno</span>{% else %}<span style="color:#dc2626;">&#10006; chybí</span>{% endif %}</td>
+                <td>{{ cfg.server_url or '—' }}</td>
+            </tr>
+            <tr>
+                <td><strong>AUTH_USER</strong> (Basic auth pro Radar UI)</td>
+                <td>{% if cfg.auth_user %}<span style="color:#15803d;">&#10004; nastaveno</span>{% else %}<span style="color:#dc2626;">&#10006; chybí</span>{% endif %}</td>
+                <td>{{ cfg.auth_user or '—' }}</td>
+            </tr>
+            <tr style="background:{% if cfg.anthropic_key_set %}#f0fdf4{% else %}#fef3c7{% endif %};">
+                <td>
+                    <strong>ANTHROPIC_API_KEY</strong>
+                    <div style="font-size:0.78em; color:#666; margin-top:3px;">
+                        Volitelné — zapne LLM extraction layer pro HR Hunter
+                        (+10-15 % kvality, ~$5/měsíc)
+                    </div>
+                </td>
+                <td>
+                    {% if cfg.anthropic_key_set %}
+                    <span style="color:#15803d; font-weight:700;">&#10004; nastaveno</span>
+                    {% else %}
+                    <span style="color:#a16207; font-weight:700;">&#9888; není nastaveno</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if cfg.anthropic_key_set %}<code>sk-ant-***hidden***</code>{% else %}—{% endif %}
+                </td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="card" style="background:#f8fafc;">
+    <h2 style="margin-bottom:10px;">Jak přidat ANTHROPIC_API_KEY</h2>
+    <ol style="color:#444; line-height:1.8; padding-left:24px;">
+        <li>
+            Vytvoř API key na
+            <a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:#6366f1;">
+                console.anthropic.com/settings/keys
+            </a>
+            (přihlas se svým Anthropic účtem, sekce "API Keys" → "Create Key")
+        </li>
+        <li>
+            Na VPS otevři <code>{{ cfg.vps_path }}</code> v editoru:
+            <pre style="background:#1e1b4b; color:#eee; padding:10px; border-radius:6px; font-size:0.82em; margin-top:6px;">ssh root@178.104.207.97
+nano {{ cfg.vps_path }}</pre>
+        </li>
+        <li>
+            Najdi řádek (zakomentovaný) a odkomentuj + vlož hodnotu:
+            <pre style="background:#1e1b4b; color:#eee; padding:10px; border-radius:6px; font-size:0.82em; margin-top:6px;">ANTHROPIC_API_KEY=sk-ant-api03-xxxxxxxxxxxxxxx</pre>
+        </li>
+        <li>
+            Restart služby:
+            <pre style="background:#1e1b4b; color:#eee; padding:10px; border-radius:6px; font-size:0.82em; margin-top:6px;">systemctl restart sintera-radar</pre>
+        </li>
+        <li>
+            Refresh této stránky — uvidíš zelený "&#10004; nastaveno". Příští enrichment (manuální nebo nightly cron) automaticky využije LLM vrstvu.
+        </li>
+    </ol>
+    <div style="margin-top:14px; padding:10px 14px; background:#dbeafe; border-radius:6px; font-size:0.85em; color:#1e40af;">
+        <strong>Náklady:</strong> Claude Haiku 4.5 ~$0.02 za firmu, takže 30 firem denně přes nightly cron = <strong>$0.60/den = ~$18/měsíc</strong>. Při lepší kvalitě extrakce typicky zlepšení o 10-15 % named contacts.
+    </div>
+</div>
+
+<div class="card" style="background:#fef3c7;">
+    <h3 style="margin-bottom:6px;">Co LLM extraction dělá navíc</h3>
+    <ul style="color:#444; line-height:1.7; padding-left:24px; margin-top:6px;">
+        <li>
+            <strong>Strukturovaná extrakce</strong> — Claude prochází plné textové verze
+            kontaktních stránek a vytahuje kontakty jako JSON (jméno, role, email, telefon)
+            s confidence skóre.
+        </li>
+        <li>
+            <strong>Lepší disambiguace</strong> — když je na stránce 5 emailů a 3 jména,
+            LLM zvládne přesněji určit které email patří ke kterému jménu (vs současný
+            text-proximity regex, který občas chybuje).
+        </li>
+        <li>
+            <strong>Detekce HR-specifických rolí</strong> — Claude rozumí, že "vedoucí
+            náboru" / "talent acquisition lead" / "personální ředitelka" jsou HR.
+            Regex katalog je omezený.
+        </li>
+        <li>
+            <strong>Tolerance ke JS-renderingu</strong> — když stránka obsahuje text ale ne ideálně formátovaný, LLM si poradí.
+        </li>
+    </ul>
+    <div style="font-size:0.85em; color:#666; margin-top:10px;">
+        Bez API key Radar dál funguje normálně přes regex extrakci (současný stav).
+        LLM je vrstva nahoru, ne náhrada.
+    </div>
+</div>
+{% endblock %}

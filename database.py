@@ -1376,6 +1376,10 @@ def dashboard_stats() -> dict:
         except Exception:
             enrich_total = enrich_named = enrich_contacts_total = 0
 
+    # LLM availability indicator
+    import os as _os
+    llm_enabled = bool(_os.environ.get("ANTHROPIC_API_KEY", "").strip())
+
     return {
         "aktivni_pozice": aktivni,
         "total_pozice": total_db,
@@ -1394,6 +1398,7 @@ def dashboard_stats() -> dict:
         "enrich_firms": enrich_total,
         "enrich_named_firms": enrich_named,
         "enrich_contacts": enrich_contacts_total,
+        "llm_enabled": llm_enabled,
     }
 
 

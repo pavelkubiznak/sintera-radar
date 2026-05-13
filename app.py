@@ -432,6 +432,23 @@ def api_enrich_status(job_id):
     return jsonify({"ok": True, **job})
 
 
+@app.route("/settings")
+def settings_page():
+    """Show current configuration + secret-key entry helper."""
+    import os
+    import re as _re
+    cfg = {
+        "smtp_user": os.environ.get("SMTP_USER", ""),
+        "smtp_pass_set": bool(os.environ.get("SMTP_PASS", "").strip()),
+        "report_to": os.environ.get("REPORT_TO", ""),
+        "server_url": os.environ.get("SERVER_URL", ""),
+        "anthropic_key_set": bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()),
+        "auth_user": os.environ.get("AUTH_USER", ""),
+        "vps_path": "/opt/sintera-radar/.env",
+    }
+    return render_template("settings.html", cfg=cfg)
+
+
 @app.route("/api/enrich-needs")
 def api_enrich_needs():
     """List firms that need enrichment (problematic, no LinkedIn DM,
