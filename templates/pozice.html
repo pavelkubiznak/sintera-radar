@@ -317,6 +317,22 @@ function toggleDM(idx, firma, pozice, kraj, url) {
         var srcBadge = src === 'scraped'
             ? '<span style="background:#fef3c7; color:#a16207; padding:1px 6px; border-radius:4px; font-size:0.7em; font-weight:700; margin-left:6px;" title="Kontakt nalezen přes HR Hunter (web firmy)">HR Hunter</span>'
             : '<span style="background:#dbeafe; color:#2563eb; padding:1px 6px; border-radius:4px; font-size:0.7em; font-weight:700; margin-left:6px;" title="Kontakt z LinkedIn DB">LinkedIn</span>';
+        // Build mailto with pre-filled subject + body from the DM
+        var emailBtn = '';
+        if (d.email) {
+            var subjectText;
+            if (d.pozice) {
+                subjectText = 'K pozici ' + d.pozice + ' u Vás';
+            } else {
+                subjectText = 'K Vašim aktuálně otevřeným pozicím';
+            }
+            var subject = encodeURIComponent(subjectText);
+            var body = encodeURIComponent(d.zprava || '');
+            var mailto = 'mailto:' + d.email + '?subject=' + subject + '&body=' + body;
+            emailBtn = '<a href="' + mailto + '" class="btn btn-outline btn-sm" '
+                + 'onclick="markSent(' + idx + ', true)" '
+                + 'title="Otevře mail s předvyplněným předmětem a tělem zprávy">Otevřít v mailu</a>';
+        }
         var html = '<div class="dm-panel-inner">' +
             '<div class="dm-panel-contact">' +
                 '<div class="name">' + d.kontakt + srcBadge + '</div>' +
@@ -330,7 +346,7 @@ function toggleDM(idx, firma, pozice, kraj, url) {
                 '<div class="dm-panel-actions">' +
                     '<button class="btn btn-primary btn-sm" onclick="copyDM(' + idx + ')">Zkopirovat</button>' +
                     (d.linkedin_url ? '<a href="' + d.linkedin_url + '" target="_blank" class="btn btn-outline btn-sm">LinkedIn</a>' : '') +
-                    (d.email ? '<a href="mailto:' + d.email + '" class="btn btn-outline btn-sm">Email</a>' : '') +
+                    emailBtn +
                     '<button class="btn btn-green btn-sm" onclick="markSent(' + idx + ')">Odeslano</button>' +
                     '<span class="copy-ok-inline" id="copy-ok-' + idx + '">Zkopirovano!</span>' +
                     '<span class="dm-panel-chars">' + d.char_count + ' znaku</span>' +
@@ -353,17 +369,18 @@ function copyDM(idx) {
     });
 }
 
-function markSent(idx) {
+function markSent(idx, silent) {
     var d = dmCache[idx];
     if (!d) return;
-    if (!confirm('Oznacit zpravu pro ' + d.firma + ' jako odeslanou?')) return;
+    if (!silent && !confirm('Oznacit zpravu pro ' + d.firma + ' jako odeslanou?')) return;
+    var kanal = silent ? 'Email' : (d.linkedin_url ? 'LinkedIn DM' : 'Email');
     fetch('/api/mark-contacted', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
             firma: d.firma, firma_norm: d.firma_norm,
             kontakt: d.kontakt, kontakt_url: d.linkedin_url,
-            kanal: 'LinkedIn DM', kraj: d.kraj
+            kanal: kanal, kraj: d.kraj
         })
     }).then(function(r) { return r.json(); }).then(function(data) {
         if (data.ok) {
